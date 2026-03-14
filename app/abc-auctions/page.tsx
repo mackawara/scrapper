@@ -1,0 +1,257 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import Alert from "@mui/material/Alert";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import CircularProgress from "@mui/material/CircularProgress";
+import Snackbar from "@mui/material/Snackbar";
+import Stack from "@mui/material/Stack";
+import Typography from "@mui/material/Typography";
+import GavelIcon from "@mui/icons-material/Gavel";
+import CategoryIcon from "@mui/icons-material/Category";
+import GridViewIcon from "@mui/icons-material/GridView";
+import RefreshIcon from "@mui/icons-material/Refresh";
+import VisibilityIcon from "@mui/icons-material/Visibility";
+import ProjectShell, { NavItem } from "@/components/ProjectShell";
+import CategorySidebar, { CategoryItem } from "@/components/abc-auctions/CategorySidebar";
+import ProductGrid from "@/components/abc-auctions/ProductGrid";
+import WatchDialog from "@/components/abc-auctions/WatchDialog";
+import { AuctionProductData, WatchedProductData } from "@/lib/abc-auctions/types";
+
+const NAV_ITEMS: NavItem[] = [
+  { label: "Browse", href: "/abc-auctions", icon: <GridViewIcon fontSize="small" /> },
+  { label: "Categories", href: "/abc-auctions/categories", icon: <CategoryIcon fontSize="small" /> },
+  { label: "Watch List", href: "/abc-auctions/watchlist", icon: <VisibilityIcon fontSize="small" /> },
+];
+
+export default function AbcAuctionsPage() {
+  const searchParams = useSearchParams();
+  const [products, setProducts] = useState<AuctionProductData[]>([]);
+  const [watched, setWatched] = useState<WatchedProductData[]>([]);
+  const [categories, setCategories] = useState<CategoryItem[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(() => {
+    const cat = searchParams.get("category");
+    return cat ? [cat] : [];
+  });
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [regexMode, setRegexMode] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [scraping, setScraping] = useState(false);
+  const [watchDialog, setWatchDialog] = useState<{ open: boolean; product: AuctionProductData | null }>({
+    open: false,
+    product: null,
+  });
+  const [watchLoading, setWatchLoading] = useState(false);
+  const [snackbar, setSnackbar] = useState<{
+    open: boolean;
+    message: string;
+    severity: "success" | "error" | "info";
+  }>({ open: false, message: "", severity: "success" });
+
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounce search input; validate regex eagerly so the error shows before the API call
+  useEffect(() => {
+    if (search && regexMode) {
+      try {
+        new RegExp(search);
+        setSearchError("");
+      } catch {
+        setSearchError("Invalid regex pattern");
+        if (searchTimer.current) clearTimeout(searchTimer.current);
+        return;
+      }
+    } else {
+      setSearchError("");
+    }
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => setDebouncedSearch(search), 400);
+    return () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    };
+  }, [search, regexMode]);
+
+  const fetchProducts = useCallback(async () => {
+    if (searchError) return;
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ limit: "48" });
+      if (debouncedSearch) {
+        // In literal mode, escape regex metacharacters so the search is treated as plain text
+        const pattern = regexMode
+          ? debouncedSearch
+          : debouncedSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        params.set("search", pattern);
+      }
+      if (selectedCategories.length === 1) params.set("category", selectedCategories[0]);
+      const res = await fetch(`/api/abc-auctions/products?${params}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setSearchError(data.error ?? "Search failed");
+        return;
+      }
+      setProducts(data.products ?? []);
+      setTotal(data.total ?? 0);
+    } finally {
+      setLoading(false);
+    }
+  }, [debouncedSearch, selectedCategories, regexMode, searchError]);
+
+  const fetchCategories = useCallback(async () => {
+    const res = await fetch("/api/abc-auctions/categories");
+    const data = await res.json();
+    setCategories(data.categories ?? [] as CategoryItem[]);
+  }, []);
+
+  const fetchWatched = useCallback(async () => {
+    const res = await fetch("/api/abc-auctions/watch");
+    const data = await res.json();
+    setWatched(data.watched ?? []);
+  }, []);
+
+  useEffect(() => {
+    fetchProducts();
+  }, [fetchProducts]);
+
+  useEffect(() => {
+    fetchCategories();
+    fetchWatched();
+  }, [fetchCategories, fetchWatched]);
+
+  async function handleScrape() {
+    setScraping(true);
+    try {
+      const res = await fetch("/api/abc-auctions/products", { method: "POST" });
+      const data = await res.json();
+      setSnackbar({ open: true, message: `Scraped ${data.scraped} products`, severity: "success" });
+      await Promise.all([fetchProducts(), fetchCategories()]);
+    } catch {
+      setSnackbar({ open: true, message: "Scrape failed", severity: "error" });
+    } finally {
+      setScraping(false);
+    }
+  }
+
+  async function handleWatch(minBid: number, maxBid: number) {
+    const product = watchDialog.product!;
+    setWatchLoading(true);
+    try {
+      const res = await fetch("/api/abc-auctions/watch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          externalId: product.externalId,
+          productUrl: product.productUrl,
+          title: product.title,
+          imageUrl: product.imageUrl,
+          auctionEndTime: product.auctionEndTime,
+          minBid,
+          maxBid,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        setSnackbar({ open: true, message: err.error ?? "Failed to watch", severity: "error" });
+        return;
+      }
+      setSnackbar({ open: true, message: "Added to watch list", severity: "success" });
+      setWatchDialog({ open: false, product: null });
+      await fetchWatched();
+    } finally {
+      setWatchLoading(false);
+    }
+  }
+
+  const sidebar = (
+    <CategorySidebar
+      categories={categories}
+      selected={selectedCategories}
+      onChange={setSelectedCategories}
+    />
+  );
+
+  return (
+    <ProjectShell
+      title="ABC Auctions"
+      navItems={NAV_ITEMS}
+      search={search}
+      onSearch={(val) => { setSearch(val); }}
+      searchPlaceholder={regexMode ? "Regex pattern… e.g. ^toyota|ford" : "Search lots…"}
+      regexMode={regexMode}
+      onToggleRegexMode={() => { setRegexMode((r) => !r); setSearchError(""); }}
+      searchError={searchError}
+      sidebar={sidebar}
+    >
+      <Stack direction="row" alignItems="center" justifyContent="space-between" mb={3}>
+        <Stack direction="row" alignItems="center" spacing={1.5}>
+          <GavelIcon color="primary" />
+          <Typography variant="h5" fontWeight={700}>
+            Live Lots
+          </Typography>
+          {!loading && (
+            <Typography variant="body2" color="text.secondary">
+              {total} items
+            </Typography>
+          )}
+        </Stack>
+        <Button
+          variant="outlined"
+          size="small"
+          startIcon={scraping ? <CircularProgress size={14} color="inherit" /> : <RefreshIcon />}
+          onClick={handleScrape}
+          disabled={scraping}
+        >
+          {scraping ? "Scraping…" : "Refresh"}
+        </Button>
+      </Stack>
+
+      {/* Multi-category notice */}
+      {selectedCategories.length > 1 && (
+        <Box mb={2}>
+          <Alert severity="info" sx={{ py: 0.5 }}>
+            Showing results for {selectedCategories.length} categories. Select a single category to filter server-side.
+          </Alert>
+        </Box>
+      )}
+
+      <ProductGrid
+        products={
+          selectedCategories.length > 1
+            ? products.filter((p) => selectedCategories.includes(p.category))
+            : products
+        }
+        watched={watched}
+        loading={loading}
+        onWatch={(product) => setWatchDialog({ open: true, product })}
+      />
+
+      <WatchDialog
+        open={watchDialog.open}
+        product={watchDialog.product}
+        onClose={() => setWatchDialog({ open: false, product: null })}
+        onConfirm={handleWatch}
+        loading={watchLoading}
+      />
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          severity={snackbar.severity}
+          variant="filled"
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
+    </ProjectShell>
+  );
+}
