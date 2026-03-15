@@ -9,8 +9,10 @@ import Button from "@mui/material/Button";
 import Stack from "@mui/material/Stack";
 import Chip from "@mui/material/Chip";
 import Divider from "@mui/material/Divider";
+import CircularProgress from "@mui/material/CircularProgress";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+import GavelIcon from "@mui/icons-material/Gavel";
 import { AuctionProductData, BidderStatus } from "@/lib/abc-auctions/types";
 import BidStatusChip from "./BidStatusChip";
 import CountdownTimer from "./CountdownTimer";
@@ -20,9 +22,18 @@ interface ProductCardProps {
   isWatched: boolean;
   bidderStatus?: BidderStatus;
   onWatch: () => void;
+  onBid?: () => void;
+  bidLoading?: boolean;
 }
 
-export default function ProductCard({ product, isWatched, bidderStatus, onWatch }: ProductCardProps) {
+export default function ProductCard({
+  product,
+  isWatched,
+  bidderStatus,
+  onWatch,
+  onBid,
+  bidLoading = false,
+}: ProductCardProps) {
   return (
     <Card
       elevation={2}
@@ -40,7 +51,9 @@ export default function ProductCard({ product, isWatched, bidderStatus, onWatch 
         alt={product.title}
         onClick={() => window.open(product.productUrl, "_blank", "noopener,noreferrer")}
         sx={{ height: 180, objectFit: "cover", bgcolor: "grey.100", cursor: "pointer" }}
-        onError={(e) => { (e.target as HTMLImageElement).src = "/placeholder.png"; }}
+        onError={(e) => {
+          (e.target as HTMLImageElement).src = "/placeholder.png";
+        }}
       />
 
       <CardContent sx={{ flexGrow: 1, pb: 1 }}>
@@ -71,13 +84,17 @@ export default function ProductCard({ product, isWatched, bidderStatus, onWatch 
 
         <Stack direction="row" justifyContent="space-between" alignItems="center">
           <Stack>
-            <Typography variant="caption" color="text.secondary">Current bid</Typography>
+            <Typography variant="caption" color="text.secondary">
+              Current bid
+            </Typography>
             <Typography variant="body1" fontWeight={700} color="primary">
               ${product.currentPrice.toLocaleString()}
             </Typography>
           </Stack>
           <Stack alignItems="flex-end">
-            <Typography variant="caption" color="text.secondary">Max price</Typography>
+            <Typography variant="caption" color="text.secondary">
+              Max price
+            </Typography>
             <Typography variant="body2" fontWeight={600}>
               ${product.maxPrice.toLocaleString()}
             </Typography>
@@ -85,7 +102,9 @@ export default function ProductCard({ product, isWatched, bidderStatus, onWatch 
         </Stack>
 
         <Stack direction="row" justifyContent="space-between" alignItems="center" mt={1}>
-          <Typography variant="caption" color="text.secondary">Closes in</Typography>
+          <Typography variant="caption" color="text.secondary">
+            Closes in
+          </Typography>
           <CountdownTimer auctionEndTime={product.auctionEndTime} />
         </Stack>
       </CardContent>
@@ -113,6 +132,16 @@ export default function ProductCard({ product, isWatched, bidderStatus, onWatch 
           color="primary"
         >
           {isWatched ? "Watching" : "Watch"}
+        </Button>
+        <Button
+          size="small"
+          variant="contained"
+          color="secondary"
+          startIcon={bidLoading ? <CircularProgress size={14} color="inherit" /> : <GavelIcon />}
+          onClick={onBid}
+          disabled={bidLoading || !onBid}
+        >
+          {bidLoading ? "Bidding…" : "Bid"}
         </Button>
       </CardActions>
     </Card>

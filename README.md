@@ -6,6 +6,18 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
+## Environment variables
+
+Auto-bidding now requires ABC Auctions account credentials for browser login before placing bids.
+
+Add these to your `.env` file:
+
+```dotenv
+ABC_AUCTIONS_EMAIL=your-login-email
+# or ABC_AUCTIONS_USERNAME=your-login-username
+ABC_AUCTIONS_PASSWORD=your-login-password
+```
+
 First, run the development server:
 
 ```bash

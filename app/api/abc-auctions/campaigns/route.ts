@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
-import { scrapeCampaigns } from "@/lib/abc-auctions/scraper";
+import { fetchCampaigns } from "@/lib/abc-auctions/api-scraper";
 import logger from "@/lib/logger";
 
 /**
  * GET /api/abc-auctions/campaigns
- * Returns live campaign list scraped from /campaigns.
- * Each campaign includes its id, name and the URL to its lots page.
+ * Returns live campaign list from the ABC Auctions API.
  */
 export async function GET() {
   try {
-    const campaigns = await scrapeCampaigns();
+    const campaigns = await fetchCampaigns();
     return NextResponse.json({ campaigns });
   } catch (err) {
     logger.error("🔴 GET /api/abc-auctions/campaigns failed", { err });

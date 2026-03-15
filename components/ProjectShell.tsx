@@ -14,11 +14,11 @@ import Toolbar from "@mui/material/Toolbar";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import Chip from "@mui/material/Chip";
-import AccountCircleIcon from "@mui/icons-material/AccountCircle";
 import HomeIcon from "@mui/icons-material/Home";
 import SearchIcon from "@mui/icons-material/Search";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import UserMenu from "@/components/UserMenu";
 
 export const DRAWER_WIDTH = 240;
 
@@ -178,11 +178,7 @@ export default function ProjectShell({
                 <HomeIcon fontSize="small" />
               </IconButton>
             </Tooltip>
-            <Tooltip title="Account">
-              <IconButton size="small" color="inherit">
-                <AccountCircleIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
+            <UserMenu />
           </Toolbar>
         </AppBar>
 

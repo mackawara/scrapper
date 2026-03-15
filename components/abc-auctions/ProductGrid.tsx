@@ -3,7 +3,7 @@
 import Grid from "@mui/material/Grid";
 import Skeleton from "@mui/material/Skeleton";
 import Card from "@mui/material/Card";
-import { AuctionProductData, BidderStatus, WatchedProductData } from "@/lib/abc-auctions/types";
+import { AuctionProductData, WatchedProductData } from "@/lib/abc-auctions/types";
 import ProductCard from "./ProductCard";
 
 interface ProductGridProps {
@@ -11,6 +11,8 @@ interface ProductGridProps {
   watched: WatchedProductData[];
   loading: boolean;
   onWatch: (product: AuctionProductData) => void;
+  onBid: (product: AuctionProductData) => void;
+  bidLoadingExternalId?: string | null;
 }
 
 function CardSkeleton() {
@@ -25,7 +27,14 @@ function CardSkeleton() {
   );
 }
 
-export default function ProductGrid({ products, watched, loading, onWatch }: ProductGridProps) {
+export default function ProductGrid({
+  products,
+  watched,
+  loading,
+  onWatch,
+  onBid,
+  bidLoadingExternalId = null,
+}: ProductGridProps) {
   const watchedMap = new Map(watched.map((w) => [w.externalId, w]));
 
   if (loading) {
@@ -51,6 +60,8 @@ export default function ProductGrid({ products, watched, loading, onWatch }: Pro
               isWatched={!!watchEntry}
               bidderStatus={watchEntry?.bidderStatus}
               onWatch={() => onWatch(product)}
+              onBid={() => onBid(product)}
+              bidLoading={bidLoadingExternalId === product.externalId}
             />
           </Grid>
         );

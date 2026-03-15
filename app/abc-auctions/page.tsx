@@ -6,6 +6,7 @@ import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import CircularProgress from "@mui/material/CircularProgress";
+import Pagination from "@mui/material/Pagination";
 import Snackbar from "@mui/material/Snackbar";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
@@ -16,15 +17,26 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import ProjectShell, { NavItem } from "@/components/ProjectShell";
 import CategorySidebar, { CategoryItem } from "@/components/abc-auctions/CategorySidebar";
+import FilterPanel, { Filters, EMPTY_FILTERS } from "@/components/abc-auctions/FilterPanel";
 import ProductGrid from "@/components/abc-auctions/ProductGrid";
 import WatchDialog from "@/components/abc-auctions/WatchDialog";
 import { AuctionProductData, WatchedProductData } from "@/lib/abc-auctions/types";
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Browse", href: "/abc-auctions", icon: <GridViewIcon fontSize="small" /> },
-  { label: "Categories", href: "/abc-auctions/categories", icon: <CategoryIcon fontSize="small" /> },
-  { label: "Watch List", href: "/abc-auctions/watchlist", icon: <VisibilityIcon fontSize="small" /> },
+  {
+    label: "Categories",
+    href: "/abc-auctions/categories",
+    icon: <CategoryIcon fontSize="small" />,
+  },
+  {
+    label: "Watch List",
+    href: "/abc-auctions/watchlist",
+    icon: <VisibilityIcon fontSize="small" />,
+  },
 ];
+
+const PAGE_SIZE = 48;
 
 export default function AbcAuctionsPage() {
   const searchParams = useSearchParams();
@@ -40,13 +52,19 @@ export default function AbcAuctionsPage() {
   const [regexMode, setRegexMode] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [scraping, setScraping] = useState(false);
-  const [watchDialog, setWatchDialog] = useState<{ open: boolean; product: AuctionProductData | null }>({
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [watchDialog, setWatchDialog] = useState<{
+    open: boolean;
+    product: AuctionProductData | null;
+  }>({
     open: false,
     product: null,
   });
   const [watchLoading, setWatchLoading] = useState(false);
+  const [bidLoadingExternalId, setBidLoadingExternalId] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
@@ -76,19 +94,32 @@ export default function AbcAuctionsPage() {
     };
   }, [search, regexMode]);
 
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, selectedCategories, filters]);
+
   const fetchProducts = useCallback(async () => {
     if (searchError) return;
     setLoading(true);
     try {
-      const params = new URLSearchParams({ limit: "48" });
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), page: String(page) });
       if (debouncedSearch) {
-        // In literal mode, escape regex metacharacters so the search is treated as plain text
         const pattern = regexMode
           ? debouncedSearch
           : debouncedSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         params.set("search", pattern);
       }
       if (selectedCategories.length === 1) params.set("category", selectedCategories[0]);
+
+      // Date filters
+      if (filters.endAfter) params.set("endAfter", filters.endAfter);
+      if (filters.endBefore) params.set("endBefore", filters.endBefore);
+
+      // Price filters
+      if (filters.minPrice) params.set("minPrice", filters.minPrice);
+      if (filters.maxPrice) params.set("maxPrice", filters.maxPrice);
+
       const res = await fetch(`/api/abc-auctions/products?${params}`);
       const data = await res.json();
       if (!res.ok) {
@@ -100,12 +131,12 @@ export default function AbcAuctionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, selectedCategories, regexMode, searchError]);
+  }, [debouncedSearch, selectedCategories, regexMode, searchError, page, filters]);
 
   const fetchCategories = useCallback(async () => {
     const res = await fetch("/api/abc-auctions/categories");
     const data = await res.json();
-    setCategories(data.categories ?? [] as CategoryItem[]);
+    setCategories(data.categories ?? ([] as CategoryItem[]));
   }, []);
 
   const fetchWatched = useCallback(async () => {
@@ -167,12 +198,52 @@ export default function AbcAuctionsPage() {
     }
   }
 
+  async function handleBid(product: AuctionProductData) {
+    setBidLoadingExternalId(product.externalId);
+    try {
+      const res = await fetch("/api/abc-auctions/bid/place", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productUrl: product.productUrl,
+          currentPrice: product.currentPrice,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setSnackbar({
+          open: true,
+          message: data.error ?? "Failed to place bid",
+          severity: "error",
+        });
+        return;
+      }
+
+      setSnackbar({
+        open: true,
+        message: `Bid placed at $${Number(data.bidAmount ?? product.currentPrice + 1).toLocaleString()}`,
+        severity: "success",
+      });
+      await fetchProducts();
+    } catch {
+      setSnackbar({ open: true, message: "Failed to place bid", severity: "error" });
+    } finally {
+      setBidLoadingExternalId(null);
+    }
+  }
+
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+
   const sidebar = (
-    <CategorySidebar
-      categories={categories}
-      selected={selectedCategories}
-      onChange={setSelectedCategories}
-    />
+    <>
+      <FilterPanel filters={filters} onChange={setFilters} />
+      <CategorySidebar
+        categories={categories}
+        selected={selectedCategories}
+        onChange={setSelectedCategories}
+      />
+    </>
   );
 
   return (
@@ -180,10 +251,15 @@ export default function AbcAuctionsPage() {
       title="ABC Auctions"
       navItems={NAV_ITEMS}
       search={search}
-      onSearch={(val) => { setSearch(val); }}
+      onSearch={(val) => {
+        setSearch(val);
+      }}
       searchPlaceholder={regexMode ? "Regex pattern… e.g. ^toyota|ford" : "Search lots…"}
       regexMode={regexMode}
-      onToggleRegexMode={() => { setRegexMode((r) => !r); setSearchError(""); }}
+      onToggleRegexMode={() => {
+        setRegexMode((r) => !r);
+        setSearchError("");
+      }}
       searchError={searchError}
       sidebar={sidebar}
     >
@@ -196,6 +272,7 @@ export default function AbcAuctionsPage() {
           {!loading && (
             <Typography variant="body2" color="text.secondary">
               {total} items
+              {totalPages > 1 && ` · Page ${page} of ${totalPages}`}
             </Typography>
           )}
         </Stack>
@@ -214,7 +291,8 @@ export default function AbcAuctionsPage() {
       {selectedCategories.length > 1 && (
         <Box mb={2}>
           <Alert severity="info" sx={{ py: 0.5 }}>
-            Showing results for {selectedCategories.length} categories. Select a single category to filter server-side.
+            Showing results for {selectedCategories.length} categories. Select a single category to
+            filter server-side.
           </Alert>
         </Box>
       )}
@@ -228,7 +306,27 @@ export default function AbcAuctionsPage() {
         watched={watched}
         loading={loading}
         onWatch={(product) => setWatchDialog({ open: true, product })}
+        onBid={handleBid}
+        bidLoadingExternalId={bidLoadingExternalId}
       />
+
+      {/* Pagination */}
+      {totalPages > 1 && !loading && (
+        <Stack alignItems="center" mt={4} mb={2}>
+          <Pagination
+            count={totalPages}
+            page={page}
+            onChange={(_e, value) => {
+              setPage(value);
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+            color="primary"
+            size="large"
+            showFirstButton
+            showLastButton
+          />
+        </Stack>
+      )}
 
       <WatchDialog
         open={watchDialog.open}

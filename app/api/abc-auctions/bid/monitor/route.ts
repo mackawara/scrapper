@@ -3,6 +3,7 @@ import connectDB from "@/lib/mongoose";
 import WatchedProduct from "@/models/WatchedProduct";
 import { startMonitor, stopMonitor, getMonitorStatuses } from "@/lib/abc-auctions/bidder";
 import logger from "@/lib/logger";
+import { TWENTY_FOUR_HOURS_MS } from "@/lib/abc-auctions/constants";
 
 export async function GET() {
   const statuses = getMonitorStatuses();
@@ -31,13 +32,16 @@ export async function POST(req: NextRequest) {
 
     // Default: start
     if (watched.maxBid <= 0) {
-      return NextResponse.json({ error: "maxBid must be greater than 0 to start monitor" }, { status: 400 });
+      return NextResponse.json(
+        { error: "maxBid must be greater than 0 to start monitor" },
+        { status: 400 }
+      );
     }
 
     startMonitor(watchedProductId);
 
     const timeLeft = new Date(watched.auctionEndTime).getTime() - Date.now();
-    const bidderStatus = timeLeft > 11 * 60 * 1000 ? "waiting" : "active";
+    const bidderStatus = timeLeft > TWENTY_FOUR_HOURS_MS ? "waiting" : "active";
 
     logger.info("🟢 Monitor started", { watchedProductId, bidderStatus });
     return NextResponse.json({ status: "started", bidderStatus });
