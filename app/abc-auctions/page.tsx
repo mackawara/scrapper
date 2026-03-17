@@ -12,6 +12,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import GavelIcon from "@mui/icons-material/Gavel";
 import CategoryIcon from "@mui/icons-material/Category";
+import FavoriteBorderIcon from "@mui/icons-material/FavoriteBorder";
 import GridViewIcon from "@mui/icons-material/GridView";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import VisibilityIcon from "@mui/icons-material/Visibility";
@@ -20,7 +21,11 @@ import CategorySidebar, { CategoryItem } from "@/components/abc-auctions/Categor
 import FilterPanel, { Filters, EMPTY_FILTERS } from "@/components/abc-auctions/FilterPanel";
 import ProductGrid from "@/components/abc-auctions/ProductGrid";
 import WatchDialog from "@/components/abc-auctions/WatchDialog";
-import { AuctionProductData, WatchedProductData } from "@/lib/abc-auctions/types";
+import {
+  AuctionProductData,
+  WatchedProductData,
+  WishlistProductData,
+} from "@/lib/abc-auctions/types";
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Browse", href: "/abc-auctions", icon: <GridViewIcon fontSize="small" /> },
@@ -33,6 +38,11 @@ const NAV_ITEMS: NavItem[] = [
     label: "Watch List",
     href: "/abc-auctions/watchlist",
     icon: <VisibilityIcon fontSize="small" />,
+  },
+  {
+    label: "Wish List",
+    href: "/abc-auctions/wishlist",
+    icon: <FavoriteBorderIcon fontSize="small" />,
   },
 ];
 
@@ -65,6 +75,8 @@ export default function AbcAuctionsPage() {
   });
   const [watchLoading, setWatchLoading] = useState(false);
   const [bidLoadingExternalId, setBidLoadingExternalId] = useState<string | null>(null);
+  const [bidProductIds, setBidProductIds] = useState<string[]>([]);
+  const [wishlistMatchExternalIds, setWishlistMatchExternalIds] = useState<string[]>([]);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
@@ -145,6 +157,28 @@ export default function AbcAuctionsPage() {
     setWatched(data.watched ?? []);
   }, []);
 
+  const fetchWishlistMatches = useCallback(async () => {
+    const res = await fetch("/api/abc-auctions/wishlist");
+    const data = await res.json();
+    const wishlist = (data.wishlist ?? []) as WishlistProductData[];
+    const matchedIds = new Set<string>();
+    for (const item of wishlist) {
+      if (!item.hasMatch) continue;
+      for (const match of item.latestMatches ?? []) {
+        matchedIds.add(match.externalId);
+      }
+    }
+    setWishlistMatchExternalIds(Array.from(matchedIds));
+  }, []);
+
+  const runDailyWishlistCheck = useCallback(async () => {
+    await fetch("/api/abc-auctions/wishlist/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force: false }),
+    });
+  }, []);
+
   useEffect(() => {
     fetchProducts();
   }, [fetchProducts]);
@@ -152,7 +186,10 @@ export default function AbcAuctionsPage() {
   useEffect(() => {
     fetchCategories();
     fetchWatched();
-  }, [fetchCategories, fetchWatched]);
+    runDailyWishlistCheck().finally(() => {
+      fetchWishlistMatches();
+    });
+  }, [fetchCategories, fetchWatched, runDailyWishlistCheck, fetchWishlistMatches]);
 
   async function handleScrape() {
     setScraping(true);
@@ -161,6 +198,8 @@ export default function AbcAuctionsPage() {
       const data = await res.json();
       setSnackbar({ open: true, message: `Scraped ${data.scraped} products`, severity: "success" });
       await Promise.all([fetchProducts(), fetchCategories()]);
+      await runDailyWishlistCheck();
+      await fetchWishlistMatches();
     } catch {
       setSnackbar({ open: true, message: "Scrape failed", severity: "error" });
     } finally {
@@ -225,6 +264,9 @@ export default function AbcAuctionsPage() {
         message: `Bid placed at $${Number(data.bidAmount ?? product.currentPrice + 1).toLocaleString()}`,
         severity: "success",
       });
+      setBidProductIds((prev) =>
+        prev.includes(product.externalId) ? prev : [product.externalId, ...prev]
+      );
       await fetchProducts();
     } catch {
       setSnackbar({ open: true, message: "Failed to place bid", severity: "error" });
@@ -304,6 +346,8 @@ export default function AbcAuctionsPage() {
             : products
         }
         watched={watched}
+        wishlistMatchExternalIds={wishlistMatchExternalIds}
+        bidProductIds={bidProductIds}
         loading={loading}
         onWatch={(product) => setWatchDialog({ open: true, product })}
         onBid={handleBid}

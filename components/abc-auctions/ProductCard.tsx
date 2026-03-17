@@ -11,7 +11,6 @@ import Chip from "@mui/material/Chip";
 import Divider from "@mui/material/Divider";
 import CircularProgress from "@mui/material/CircularProgress";
 import VisibilityIcon from "@mui/icons-material/Visibility";
-import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import GavelIcon from "@mui/icons-material/Gavel";
 import { AuctionProductData, BidderStatus } from "@/lib/abc-auctions/types";
 import BidStatusChip from "./BidStatusChip";
@@ -20,6 +19,7 @@ import CountdownTimer from "./CountdownTimer";
 interface ProductCardProps {
   product: AuctionProductData;
   isWatched: boolean;
+  isWishlistMatch?: boolean;
   bidderStatus?: BidderStatus;
   onWatch: () => void;
   onBid?: () => void;
@@ -29,6 +29,7 @@ interface ProductCardProps {
 export default function ProductCard({
   product,
   isWatched,
+  isWishlistMatch = false,
   bidderStatus,
   onWatch,
   onBid,
@@ -41,6 +42,9 @@ export default function ProductCard({
         height: "100%",
         display: "flex",
         flexDirection: "column",
+        borderWidth: isWishlistMatch ? 2 : 0,
+        borderStyle: isWishlistMatch ? "solid" : "none",
+        borderColor: isWishlistMatch ? "warning.main" : "transparent",
         transition: "box-shadow 0.2s",
         "&:hover": { boxShadow: 6 },
       }}
@@ -56,25 +60,31 @@ export default function ProductCard({
         }}
       />
 
-      <CardContent sx={{ flexGrow: 1, pb: 1 }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" mb={0.5}>
-          <Chip label={product.category} size="small" color="secondary" sx={{ fontSize: 10 }} />
-          {product.lotNumber && (
-            <Typography variant="caption" color="text.disabled">
-              {product.lotNumber}
-            </Typography>
-          )}
+      <CardContent sx={{ flexGrow: 1, pb: 1, pt: 1 }}>
+        <Stack direction="row" justifyContent="center" alignItems="center" mb={0.5}>
+          <Stack direction="row" spacing={0.75} flexWrap="wrap" justifyContent="center">
+            {isWishlistMatch && (
+              <Chip
+                label="Wish Match"
+                size="small"
+                color="warning"
+                sx={{ fontSize: 10, fontWeight: 700 }}
+              />
+            )}
+            <Chip label={product.category} size="small" color="secondary" sx={{ fontSize: 10 }} />
+          </Stack>
         </Stack>
 
         <Typography
           variant="subtitle2"
           fontWeight={600}
-          mt={1}
+          mt={0}
           sx={{
             display: "-webkit-box",
             WebkitLineClamp: 2,
             WebkitBoxOrient: "vertical",
             overflow: "hidden",
+            textAlign: "center",
           }}
         >
           {product.title}
@@ -84,19 +94,13 @@ export default function ProductCard({
 
         <Stack direction="row" justifyContent="space-between" alignItems="center">
           <Stack>
-            <Typography variant="caption" color="text.secondary">
-              Current bid
-            </Typography>
             <Typography variant="body1" fontWeight={700} color="primary">
-              ${product.currentPrice.toLocaleString()}
+              Current bid: ${product.currentPrice.toLocaleString()}
             </Typography>
           </Stack>
           <Stack alignItems="flex-end">
-            <Typography variant="caption" color="text.secondary">
-              Max price
-            </Typography>
             <Typography variant="body2" fontWeight={600}>
-              ${product.maxPrice.toLocaleString()}
+              Max bid: ${product.maxPrice.toLocaleString()}
             </Typography>
           </Stack>
         </Stack>
@@ -109,40 +113,33 @@ export default function ProductCard({
         </Stack>
       </CardContent>
 
-      <CardActions sx={{ px: 2, pb: 2, pt: 0, justifyContent: "space-between" }}>
-        <Stack direction="row" spacing={1} alignItems="center">
-          {isWatched && bidderStatus && <BidStatusChip status={bidderStatus} />}
+      <CardActions
+        sx={{ px: 2, pb: 2, pt: 0, flexDirection: "column", alignItems: "stretch", gap: 1 }}
+      >
+        {isWatched && bidderStatus && <BidStatusChip status={bidderStatus} />}
+        <Stack direction="row" spacing={1}>
           <Button
+            fullWidth
             size="small"
-            variant="text"
-            startIcon={<OpenInNewIcon fontSize="small" />}
-            href={product.productUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            color="inherit"
+            variant={isWatched ? "outlined" : "contained"}
+            startIcon={<VisibilityIcon />}
+            onClick={onWatch}
+            color="primary"
           >
-            View
+            {isWatched ? "Watching" : "Watch"}
+          </Button>
+          <Button
+            fullWidth
+            size="small"
+            variant="contained"
+            color="secondary"
+            startIcon={bidLoading ? <CircularProgress size={14} color="inherit" /> : <GavelIcon />}
+            onClick={onBid}
+            disabled={bidLoading || !onBid}
+          >
+            {bidLoading ? "Bidding…" : "Bid"}
           </Button>
         </Stack>
-        <Button
-          size="small"
-          variant={isWatched ? "outlined" : "contained"}
-          startIcon={<VisibilityIcon />}
-          onClick={onWatch}
-          color="primary"
-        >
-          {isWatched ? "Watching" : "Watch"}
-        </Button>
-        <Button
-          size="small"
-          variant="contained"
-          color="secondary"
-          startIcon={bidLoading ? <CircularProgress size={14} color="inherit" /> : <GavelIcon />}
-          onClick={onBid}
-          disabled={bidLoading || !onBid}
-        >
-          {bidLoading ? "Bidding…" : "Bid"}
-        </Button>
       </CardActions>
     </Card>
   );

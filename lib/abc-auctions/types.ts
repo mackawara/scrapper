@@ -35,6 +35,29 @@ export interface MonitorStatus {
   lastBidAt: string | null;
 }
 
+export interface WishlistMatchData {
+  externalId: string;
+  title: string;
+  productUrl: string;
+  imageUrl: string;
+  currentPrice: number;
+  auctionEndTime: string;
+}
+
+export interface WishlistProductData {
+  _id: string;
+  query: string;
+  regexPattern: string;
+  isActive: boolean;
+  hasMatch: boolean;
+  matchCount: number;
+  latestMatches: WishlistMatchData[];
+  lastCheckedAt: string | null;
+  lastMatchAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ScrapedCategory {
   name: string;
   url: string;

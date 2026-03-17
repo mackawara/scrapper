@@ -23,6 +23,7 @@ import Typography from "@mui/material/Typography";
 import CategoryIcon from "@mui/icons-material/Category";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
+import FavoriteBorderIcon from "@mui/icons-material/FavoriteBorder";
 import GridViewIcon from "@mui/icons-material/GridView";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import PauseIcon from "@mui/icons-material/Pause";
@@ -37,6 +38,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Browse", href: "/abc-auctions", icon: <GridViewIcon fontSize="small" /> },
   { label: "Categories", href: "/abc-auctions/categories", icon: <CategoryIcon fontSize="small" /> },
   { label: "Watch List", href: "/abc-auctions/watchlist", icon: <VisibilityIcon fontSize="small" /> },
+  { label: "Wish List", href: "/abc-auctions/wishlist", icon: <FavoriteBorderIcon fontSize="small" /> },
 ];
 
 interface EditDialogState {
@@ -261,28 +263,19 @@ export default function WatchlistPage() {
 
                       <Stack direction="row" spacing={3} mt={1} flexWrap="wrap">
                         <Stack>
-                          <Typography variant="caption" color="text.secondary">
-                            Min bid
-                          </Typography>
                           <Typography variant="body2" fontWeight={600}>
-                            ${item.minBid.toLocaleString()}
+                            Min bid: ${item.minBid.toLocaleString()}
                           </Typography>
                         </Stack>
                         <Stack>
-                          <Typography variant="caption" color="text.secondary">
-                            Max bid
-                          </Typography>
                           <Typography variant="body2" fontWeight={600} color="primary">
-                            ${item.maxBid.toLocaleString()}
+                            Max bid: ${item.maxBid.toLocaleString()}
                           </Typography>
                         </Stack>
                         {monitor?.lastBidAmount != null && (
                           <Stack>
-                            <Typography variant="caption" color="text.secondary">
-                              Last bid
-                            </Typography>
                             <Typography variant="body2" fontWeight={600}>
-                              ${monitor.lastBidAmount.toLocaleString()}
+                              Last bid: ${monitor.lastBidAmount.toLocaleString()}
                             </Typography>
                           </Stack>
                         )}

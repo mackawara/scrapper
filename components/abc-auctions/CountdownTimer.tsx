@@ -29,6 +29,7 @@ export default function CountdownTimer({ auctionEndTime }: { auctionEndTime: str
   }
 
   const isUrgent = timeLeft.diff <= 11 * 60 * 1000;
+  const formattedTimeLeft = `${timeLeft.h} hrs ${timeLeft.m} mins ${timeLeft.s} sec`;
 
   return (
     <Typography
@@ -37,7 +38,7 @@ export default function CountdownTimer({ auctionEndTime }: { auctionEndTime: str
       color={isUrgent ? "error" : "text.secondary"}
     >
       {isUrgent && "⚡ "}
-      {String(timeLeft.h).padStart(2, "0")}:{String(timeLeft.m).padStart(2, "0")}:{String(timeLeft.s).padStart(2, "0")}
+      {formattedTimeLeft}
     </Typography>
   );
 }

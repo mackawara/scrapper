@@ -9,6 +9,8 @@ import ProductCard from "./ProductCard";
 interface ProductGridProps {
   products: AuctionProductData[];
   watched: WatchedProductData[];
+  wishlistMatchExternalIds?: string[];
+  bidProductIds?: string[];
   loading: boolean;
   onWatch: (product: AuctionProductData) => void;
   onBid: (product: AuctionProductData) => void;
@@ -30,12 +32,29 @@ function CardSkeleton() {
 export default function ProductGrid({
   products,
   watched,
+  wishlistMatchExternalIds = [],
+  bidProductIds = [],
   loading,
   onWatch,
   onBid,
   bidLoadingExternalId = null,
 }: ProductGridProps) {
   const watchedMap = new Map(watched.map((w) => [w.externalId, w]));
+  const wishlistMatchSet = new Set(wishlistMatchExternalIds);
+  const bidProductIdSet = new Set(bidProductIds);
+  const sortedProducts = [...products].sort((a, b) => {
+    const aPriority = wishlistMatchSet.has(a.externalId)
+      ? 2
+      : watchedMap.has(a.externalId) || bidProductIdSet.has(a.externalId)
+        ? 1
+        : 0;
+    const bPriority = wishlistMatchSet.has(b.externalId)
+      ? 2
+      : watchedMap.has(b.externalId) || bidProductIdSet.has(b.externalId)
+        ? 1
+        : 0;
+    return bPriority - aPriority;
+  });
 
   if (loading) {
     return (
@@ -51,13 +70,14 @@ export default function ProductGrid({
 
   return (
     <Grid container spacing={2}>
-      {products.map((product) => {
+      {sortedProducts.map((product) => {
         const watchEntry = watchedMap.get(product.externalId);
         return (
           <Grid key={product.externalId} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
             <ProductCard
               product={product}
               isWatched={!!watchEntry}
+              isWishlistMatch={wishlistMatchSet.has(product.externalId)}
               bidderStatus={watchEntry?.bidderStatus}
               onWatch={() => onWatch(product)}
               onBid={() => onBid(product)}
