@@ -16,6 +16,8 @@ import FavoriteBorderIcon from "@mui/icons-material/FavoriteBorder";
 import GridViewIcon from "@mui/icons-material/GridView";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import VisibilityIcon from "@mui/icons-material/Visibility";
+import LocalFireDepartmentIcon from "@mui/icons-material/LocalFireDepartment";
+import SettingsIcon from "@mui/icons-material/Settings";
 import ProjectShell, { NavItem } from "@/components/ProjectShell";
 import CategorySidebar, { CategoryItem } from "@/components/abc-auctions/CategorySidebar";
 import FilterPanel, { Filters, EMPTY_FILTERS } from "@/components/abc-auctions/FilterPanel";
@@ -40,9 +42,19 @@ const NAV_ITEMS: NavItem[] = [
     icon: <VisibilityIcon fontSize="small" />,
   },
   {
+    label: "Bids",
+    href: "/abc-auctions/bids",
+    icon: <LocalFireDepartmentIcon fontSize="small" />,
+  },
+  {
     label: "Wish List",
     href: "/abc-auctions/wishlist",
     icon: <FavoriteBorderIcon fontSize="small" />,
+  },
+  {
+    label: "Settings",
+    href: "/abc-auctions/settings",
+    icon: <SettingsIcon fontSize="small" />,
   },
 ];
 
