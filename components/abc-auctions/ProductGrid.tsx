@@ -3,7 +3,7 @@
 import Grid from "@mui/material/Grid";
 import Skeleton from "@mui/material/Skeleton";
 import Card from "@mui/material/Card";
-import { AuctionProductData, WatchedProductData } from "@/lib/abc-auctions/types";
+import { AuctionProductData, WatchedProductData, BidStatusData } from "@/lib/abc-auctions/types";
 import ProductCard from "./ProductCard";
 
 interface ProductGridProps {
@@ -11,6 +11,7 @@ interface ProductGridProps {
   watched: WatchedProductData[];
   wishlistMatchExternalIds?: string[];
   bidProductIds?: string[];
+  bidStatusMap?: Map<string, BidStatusData>;
   loading: boolean;
   onWatch: (product: AuctionProductData) => void;
   onBid: (product: AuctionProductData) => void;
@@ -34,6 +35,7 @@ export default function ProductGrid({
   watched,
   wishlistMatchExternalIds = [],
   bidProductIds = [],
+  bidStatusMap = new Map(),
   loading,
   onWatch,
   onBid,
@@ -72,6 +74,7 @@ export default function ProductGrid({
     <Grid container spacing={2}>
       {sortedProducts.map((product) => {
         const watchEntry = watchedMap.get(product.externalId);
+        const bidStatus = watchEntry ? bidStatusMap.get(watchEntry._id) : undefined;
         return (
           <Grid key={product.externalId} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
             <ProductCard
@@ -79,6 +82,7 @@ export default function ProductGrid({
               isWatched={!!watchEntry}
               isWishlistMatch={wishlistMatchSet.has(product.externalId)}
               bidderStatus={watchEntry?.bidderStatus}
+              bidStatus={bidStatus}
               onWatch={() => onWatch(product)}
               onBid={() => onBid(product)}
               bidLoading={bidLoadingExternalId === product.externalId}

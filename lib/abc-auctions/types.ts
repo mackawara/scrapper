@@ -13,6 +13,15 @@ export interface AuctionProductData {
   scrapedAt: string;
 }
 
+export interface BidStatusData {
+  status?: string; // winning, losing, overMax, failed, outbid
+  amount?: number;
+  currentPrice?: number;
+  maxBid?: number;
+  isOutbid?: boolean;
+  finalStatus?: string; // won, lost, tied
+}
+
 export interface WatchedProductData {
   _id: string;
   externalId: string;
@@ -26,6 +35,7 @@ export interface WatchedProductData {
   lastBidAt: string | null;
   auctionEndTime: string;
   createdAt: string;
+  latestBidStatus?: BidStatusData;
 }
 
 export interface MonitorStatus {

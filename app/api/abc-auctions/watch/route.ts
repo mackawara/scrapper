@@ -44,7 +44,6 @@ export async function POST(req: NextRequest) {
       minBid,
       maxBid,
       bidderStatus: "idle",
-      latestBidStatus: null,
     });
 
     logger.info("🟢 Added to watch list", { externalId, title });

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -61,12 +60,13 @@ const NAV_ITEMS: NavItem[] = [
 const PAGE_SIZE = 48;
 
 export default function AbcAuctionsPage() {
-  const searchParams = useSearchParams();
   const [products, setProducts] = useState<AuctionProductData[]>([]);
   const [watched, setWatched] = useState<WatchedProductData[]>([]);
+  const [bidStatusMap, setBidStatusMap] = useState<Map<string, any>>(new Map());
   const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>(() => {
-    const cat = searchParams.get("category");
+    if (typeof window === "undefined") return [];
+    const cat = new URLSearchParams(window.location.search).get("category");
     return cat ? [cat] : [];
   });
   const [search, setSearch] = useState("");
@@ -183,6 +183,29 @@ export default function AbcAuctionsPage() {
     setWishlistMatchExternalIds(Array.from(matchedIds));
   }, []);
 
+  const fetchBidStatuses = useCallback(async () => {
+    try {
+      const res = await fetch("/api/abc-auctions/bids/latest");
+      const data = await res.json();
+      const statusMap = new Map<string, any>();
+      if (data.bidStatuses && Array.isArray(data.bidStatuses)) {
+        for (const status of data.bidStatuses) {
+          statusMap.set(status.watchedProductId, {
+            status: status.latestBidStatus,
+            amount: status.latestBidAmount,
+            currentPrice: status.currentPrice,
+            maxBid: status.maxBid,
+            isOutbid: status.isOutbid,
+            finalStatus: status.finalStatus,
+          });
+        }
+      }
+      setBidStatusMap(statusMap);
+    } catch (err) {
+      console.error("Failed to fetch bid statuses", err);
+    }
+  }, []);
+
   const runDailyWishlistCheck = useCallback(async () => {
     await fetch("/api/abc-auctions/wishlist/check", {
       method: "POST",
@@ -198,10 +221,17 @@ export default function AbcAuctionsPage() {
   useEffect(() => {
     fetchCategories();
     fetchWatched();
+    fetchBidStatuses();
     runDailyWishlistCheck().finally(() => {
       fetchWishlistMatches();
     });
-  }, [fetchCategories, fetchWatched, runDailyWishlistCheck, fetchWishlistMatches]);
+  }, [
+    fetchCategories,
+    fetchWatched,
+    fetchBidStatuses,
+    runDailyWishlistCheck,
+    fetchWishlistMatches,
+  ]);
 
   async function handleScrape() {
     setScraping(true);
@@ -279,7 +309,7 @@ export default function AbcAuctionsPage() {
       setBidProductIds((prev) =>
         prev.includes(product.externalId) ? prev : [product.externalId, ...prev]
       );
-      await fetchProducts();
+      await Promise.all([fetchProducts(), fetchBidStatuses()]);
     } catch {
       setSnackbar({ open: true, message: "Failed to place bid", severity: "error" });
     } finally {
@@ -360,6 +390,7 @@ export default function AbcAuctionsPage() {
         watched={watched}
         wishlistMatchExternalIds={wishlistMatchExternalIds}
         bidProductIds={bidProductIds}
+        bidStatusMap={bidStatusMap}
         loading={loading}
         onWatch={(product) => setWatchDialog({ open: true, product })}
         onBid={handleBid}

@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      # MongoDB
+      MONGODB_URI: ${MONGODB_URI}
+
+      # NextAuth Configuration
+      AUTH_SECRET: ${AUTH_SECRET}
+      AUTH_GITHUB_ID: ${AUTH_GITHUB_ID}
+      AUTH_GITHUB_SECRET: ${AUTH_GITHUB_SECRET}
+      AUTH_URL: ${AUTH_URL:-http://localhost:3000}
+
+      # ABC Auctions Credentials
+      ABC_AUCTIONS_USERNAME: ${ABC_AUCTIONS_USERNAME}
+      ABC_AUCTIONS_EMAIL: ${ABC_AUCTIONS_EMAIL}
+      ABC_AUCTIONS_PASSWORD: ${ABC_AUCTIONS_PASSWORD}
+      ABC_AUCTIONS_TOKEN: ${ABC_AUCTIONS_TOKEN}
+
+      # API URLs (optional, defaults to production)
+      ABC_AUCTIONS_API_URL: ${ABC_AUCTIONS_API_URL:-https://app-api.abcauctions.co.zw}
+      ABC_AUCTIONS_BASE_URL: ${ABC_AUCTIONS_BASE_URL:-https://app.abcauctions.co.zw}
+
+      # Node environment
+      NODE_ENV: ${NODE_ENV:-production}
+
+    depends_on:
+      - mongodb
+
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  mongodb:
+    image: mongo:7.0
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-password}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE:-scrapper}
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    restart: unless-stopped
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+  mongodb_config:

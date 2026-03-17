@@ -12,8 +12,8 @@ import Divider from "@mui/material/Divider";
 import CircularProgress from "@mui/material/CircularProgress";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import GavelIcon from "@mui/icons-material/Gavel";
-import { AuctionProductData, BidderStatus } from "@/lib/abc-auctions/types";
-import BidStatusChip from "./BidStatusChip";
+import { AuctionProductData, BidderStatus, BidStatusData } from "@/lib/abc-auctions/types";
+import ProductStatusDisplay from "./ProductStatusDisplay";
 import CountdownTimer from "./CountdownTimer";
 
 interface ProductCardProps {
@@ -21,6 +21,7 @@ interface ProductCardProps {
   isWatched: boolean;
   isWishlistMatch?: boolean;
   bidderStatus?: BidderStatus;
+  bidStatus?: BidStatusData;
   onWatch: () => void;
   onBid?: () => void;
   bidLoading?: boolean;
@@ -31,6 +32,7 @@ export default function ProductCard({
   isWatched,
   isWishlistMatch = false,
   bidderStatus,
+  bidStatus,
   onWatch,
   onBid,
   bidLoading = false,
@@ -116,7 +118,9 @@ export default function ProductCard({
       <CardActions
         sx={{ px: 2, pb: 2, pt: 0, flexDirection: "column", alignItems: "stretch", gap: 1 }}
       >
-        {isWatched && bidderStatus && <BidStatusChip status={bidderStatus} />}
+        {isWatched && (bidderStatus || bidStatus) && (
+          <ProductStatusDisplay bidderStatus={bidderStatus} bidStatus={bidStatus} />
+        )}
         <Stack direction="row" spacing={1}>
           <Button
             fullWidth
