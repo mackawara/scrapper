@@ -12,6 +12,7 @@ import Divider from "@mui/material/Divider";
 import CircularProgress from "@mui/material/CircularProgress";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import GavelIcon from "@mui/icons-material/Gavel";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import { AuctionProductData, BidderStatus, BidStatusData } from "@/lib/abc-auctions/types";
 import ProductStatusDisplay from "./ProductStatusDisplay";
 import CountdownTimer from "./CountdownTimer";
@@ -81,15 +82,24 @@ export default function ProductCard({
           variant="subtitle2"
           fontWeight={600}
           mt={0}
+          component="a"
+          href={product.productUrl}
+          target="_blank"
+          rel="noopener noreferrer"
           sx={{
             display: "-webkit-box",
             WebkitLineClamp: 2,
             WebkitBoxOrient: "vertical",
             overflow: "hidden",
             textAlign: "center",
+            textDecoration: "none",
+            color: "inherit",
+            cursor: "pointer",
+            "&:hover": { color: "primary.main", textDecoration: "underline" },
           }}
         >
           {product.title}
+          <OpenInNewIcon sx={{ fontSize: 11, ml: 0.5, verticalAlign: "middle", opacity: 0.5 }} />
         </Typography>
 
         <Divider sx={{ my: 1 }} />

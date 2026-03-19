@@ -4,16 +4,25 @@ import { useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Divider from "@mui/material/Divider";
+import MenuItem from "@mui/material/MenuItem";
+import Select from "@mui/material/Select";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
 import FilterListIcon from "@mui/icons-material/FilterList";
+import SortIcon from "@mui/icons-material/Sort";
+import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
+import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
 
 export interface Filters {
   endAfter: string;
   endBefore: string;
   minPrice: string;
   maxPrice: string;
+  sortBy: string;
+  sortOrder: "asc" | "desc";
 }
 
 export const EMPTY_FILTERS: Filters = {
@@ -21,6 +30,8 @@ export const EMPTY_FILTERS: Filters = {
   endBefore: "",
   minPrice: "",
   maxPrice: "",
+  sortBy: "auctionEndTime",
+  sortOrder: "asc",
 };
 
 interface FilterPanelProps {
@@ -28,10 +39,23 @@ interface FilterPanelProps {
   onChange: (filters: Filters) => void;
 }
 
+const SORT_OPTIONS = [
+  { value: "auctionEndTime", label: "Closing Date" },
+  { value: "currentPrice", label: "Current Price" },
+  { value: "title", label: "Title" },
+  { value: "lotNumber", label: "Lot Number" },
+];
+
 export default function FilterPanel({ filters, onChange }: FilterPanelProps) {
   const [local, setLocal] = useState<Filters>(filters);
 
-  const hasFilters = Object.values(local).some((v) => v !== "");
+  const hasActiveFilters =
+    local.endAfter !== "" ||
+    local.endBefore !== "" ||
+    local.minPrice !== "" ||
+    local.maxPrice !== "" ||
+    local.sortBy !== EMPTY_FILTERS.sortBy ||
+    local.sortOrder !== EMPTY_FILTERS.sortOrder;
 
   function apply() {
     onChange(local);
@@ -42,7 +66,7 @@ export default function FilterPanel({ filters, onChange }: FilterPanelProps) {
     onChange(EMPTY_FILTERS);
   }
 
-  function update(key: keyof Filters, value: string) {
+  function update<K extends keyof Filters>(key: K, value: Filters[K]) {
     setLocal((prev) => ({ ...prev, [key]: value }));
   }
 
@@ -55,6 +79,47 @@ export default function FilterPanel({ filters, onChange }: FilterPanelProps) {
         </Typography>
       </Stack>
 
+      {/* Sort */}
+      <Stack direction="row" alignItems="center" spacing={1} mb={0.5}>
+        <SortIcon sx={{ fontSize: 16, color: "text.secondary" }} />
+        <Typography variant="caption" color="text.secondary">
+          Sort by
+        </Typography>
+      </Stack>
+      <Stack spacing={1} mb={1.5}>
+        <Select
+          size="small"
+          value={local.sortBy}
+          onChange={(e) => update("sortBy", e.target.value)}
+          fullWidth
+        >
+          {SORT_OPTIONS.map((o) => (
+            <MenuItem key={o.value} value={o.value}>
+              {o.label}
+            </MenuItem>
+          ))}
+        </Select>
+        <ToggleButtonGroup
+          exclusive
+          size="small"
+          value={local.sortOrder}
+          onChange={(_e, val) => val && update("sortOrder", val as "asc" | "desc")}
+          fullWidth
+        >
+          <ToggleButton value="asc" sx={{ flex: 1, gap: 0.5 }}>
+            <ArrowUpwardIcon sx={{ fontSize: 14 }} />
+            Asc
+          </ToggleButton>
+          <ToggleButton value="desc" sx={{ flex: 1, gap: 0.5 }}>
+            <ArrowDownwardIcon sx={{ fontSize: 14 }} />
+            Desc
+          </ToggleButton>
+        </ToggleButtonGroup>
+      </Stack>
+
+      <Divider sx={{ mb: 1.5 }} />
+
+      {/* End date range */}
       <Typography variant="caption" color="text.secondary" mb={0.5} display="block">
         End Date
       </Typography>
@@ -79,6 +144,7 @@ export default function FilterPanel({ filters, onChange }: FilterPanelProps) {
         />
       </Stack>
 
+      {/* Price range */}
       <Typography variant="caption" color="text.secondary" mb={0.5} display="block">
         Price (USD)
       </Typography>
@@ -107,7 +173,7 @@ export default function FilterPanel({ filters, onChange }: FilterPanelProps) {
         <Button size="small" variant="contained" onClick={apply} fullWidth>
           Apply
         </Button>
-        {hasFilters && (
+        {hasActiveFilters && (
           <Button size="small" variant="outlined" onClick={clear}>
             Clear
           </Button>

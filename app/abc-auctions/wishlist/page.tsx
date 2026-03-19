@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
-import Avatar from "@mui/material/Avatar";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
@@ -22,12 +21,19 @@ import CategoryIcon from "@mui/icons-material/Category";
 import DeleteIcon from "@mui/icons-material/Delete";
 import FavoriteBorderIcon from "@mui/icons-material/FavoriteBorder";
 import GridViewIcon from "@mui/icons-material/GridView";
-import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+import LocalFireDepartmentIcon from "@mui/icons-material/LocalFireDepartment";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import SettingsIcon from "@mui/icons-material/Settings";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import ProjectShell, { NavItem } from "@/components/ProjectShell";
-import CountdownTimer from "@/components/abc-auctions/CountdownTimer";
-import { WishlistProductData } from "@/lib/abc-auctions/types";
+import ProductGrid from "@/components/abc-auctions/ProductGrid";
+import WatchDialog from "@/components/abc-auctions/WatchDialog";
+import {
+  AuctionProductData,
+  BidStatusData,
+  WatchedProductData,
+  WishlistProductData,
+} from "@/lib/abc-auctions/types";
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Browse", href: "/abc-auctions", icon: <GridViewIcon fontSize="small" /> },
@@ -42,9 +48,19 @@ const NAV_ITEMS: NavItem[] = [
     icon: <VisibilityIcon fontSize="small" />,
   },
   {
+    label: "Bids",
+    href: "/abc-auctions/bids",
+    icon: <LocalFireDepartmentIcon fontSize="small" />,
+  },
+  {
     label: "Wish List",
     href: "/abc-auctions/wishlist",
     icon: <FavoriteBorderIcon fontSize="small" />,
+  },
+  {
+    label: "Settings",
+    href: "/abc-auctions/settings",
+    icon: <SettingsIcon fontSize="small" />,
   },
 ];
 
@@ -55,13 +71,30 @@ export default function WishlistPage() {
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState("");
   const [regexPattern, setRegexPattern] = useState("");
+
+  // Matched products as full AuctionProductData
+  const [matchedProducts, setMatchedProducts] = useState<AuctionProductData[]>([]);
+  const [matchedLoading, setMatchedLoading] = useState(false);
+
+  // Browse-page state for matched products
+  const [watched, setWatched] = useState<WatchedProductData[]>([]);
+  const [bidStatusMap, setBidStatusMap] = useState<Map<string, BidStatusData>>(new Map());
+  const [bidLoadingExternalId, setBidLoadingExternalId] = useState<string | null>(null);
+  const [bidProductIds, setBidProductIds] = useState<string[]>([]);
+  const [watchDialog, setWatchDialog] = useState<{
+    open: boolean;
+    product: AuctionProductData | null;
+  }>({ open: false, product: null });
+  const [watchLoading, setWatchLoading] = useState(false);
+
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
     severity: "success" | "error" | "info";
   }>({ open: false, message: "", severity: "success" });
 
-  const matchedProducts = Array.from(
+  // Deduplicated match externalIds sorted by soonest closing
+  const matchExternalIds = Array.from(
     wishlist
       .filter((item) => item.hasMatch)
       .flatMap((item) => item.latestMatches ?? [])
@@ -71,17 +104,33 @@ export default function WishlistPage() {
           map.set(match.externalId, match);
           return map;
         }
-
-        if (
-          new Date(match.auctionEndTime).getTime() < new Date(existing.auctionEndTime).getTime()
-        ) {
+        if (new Date(match.auctionEndTime) < new Date(existing.auctionEndTime)) {
           map.set(match.externalId, match);
         }
-
         return map;
       }, new Map<string, WishlistProductData["latestMatches"][number]>())
       .values()
-  ).sort((a, b) => new Date(a.auctionEndTime).getTime() - new Date(b.auctionEndTime).getTime());
+  )
+    .sort((a, b) => new Date(a.auctionEndTime).getTime() - new Date(b.auctionEndTime).getTime())
+    .map((m) => m.externalId);
+
+  // Fetch full product data for matched externalIds
+  const fetchMatchedProducts = useCallback(async (externalIds: string[]) => {
+    if (externalIds.length === 0) {
+      setMatchedProducts([]);
+      return;
+    }
+    setMatchedLoading(true);
+    try {
+      const res = await fetch(
+        `/api/abc-auctions/products/live?externalIds=${externalIds.join(",")}`
+      );
+      const data = await res.json();
+      setMatchedProducts(data.products ?? []);
+    } finally {
+      setMatchedLoading(false);
+    }
+  }, []);
 
   const fetchWishlist = useCallback(async () => {
     setLoading(true);
@@ -91,6 +140,35 @@ export default function WishlistPage() {
       setWishlist(data.wishlist ?? []);
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const fetchWatched = useCallback(async () => {
+    const res = await fetch("/api/abc-auctions/watch");
+    const data = await res.json();
+    setWatched(data.watched ?? []);
+  }, []);
+
+  const fetchBidStatuses = useCallback(async () => {
+    try {
+      const res = await fetch("/api/abc-auctions/bids/latest");
+      const data = await res.json();
+      const statusMap = new Map<string, BidStatusData>();
+      if (Array.isArray(data.bidStatuses)) {
+        for (const s of data.bidStatuses) {
+          statusMap.set(s.watchedProductId, {
+            status: s.latestBidStatus,
+            amount: s.latestBidAmount,
+            currentPrice: s.currentPrice,
+            maxBid: s.maxBid,
+            isOutbid: s.isOutbid,
+            finalStatus: s.finalStatus,
+          });
+        }
+      }
+      setBidStatusMap(statusMap);
+    } catch {
+      // non-critical
     }
   }, []);
 
@@ -114,7 +192,6 @@ export default function WishlistPage() {
           const refreshedProducts = Number(data.refreshedProducts ?? 0);
           const upsertedProducts = Number(data.upsertedProducts ?? 0);
           const skipped = Boolean(data.skipped);
-
           setSnackbar({
             open: true,
             message: skipped
@@ -133,11 +210,21 @@ export default function WishlistPage() {
     [fetchWishlist]
   );
 
+  // Re-fetch full products whenever wishlist match ids change
+  const prevIdsRef = useRef<string>("");
   useEffect(() => {
-    fetchWishlist().finally(() => {
-      runCheck(false);
-    });
-  }, [fetchWishlist, runCheck]);
+    const key = matchExternalIds.join(",");
+    if (key !== prevIdsRef.current) {
+      prevIdsRef.current = key;
+      fetchMatchedProducts(matchExternalIds);
+    }
+  });
+
+  useEffect(() => {
+    fetchWishlist().finally(() => runCheck(false));
+    fetchWatched();
+    fetchBidStatuses();
+  }, [fetchWishlist, runCheck, fetchWatched, fetchBidStatuses]);
 
   async function handleCreate() {
     if (!query.trim()) {
@@ -191,8 +278,75 @@ export default function WishlistPage() {
     );
   }
 
+  async function handleWatch(minBid: number, maxBid: number) {
+    const product = watchDialog.product!;
+    setWatchLoading(true);
+    try {
+      const res = await fetch("/api/abc-auctions/watch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          externalId: product.externalId,
+          productUrl: product.productUrl,
+          title: product.title,
+          imageUrl: product.imageUrl,
+          auctionEndTime: product.auctionEndTime,
+          minBid,
+          maxBid,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        setSnackbar({ open: true, message: err.error ?? "Failed to watch", severity: "error" });
+        return;
+      }
+      setSnackbar({ open: true, message: "Added to watch list", severity: "success" });
+      setWatchDialog({ open: false, product: null });
+      await fetchWatched();
+    } finally {
+      setWatchLoading(false);
+    }
+  }
+
+  async function handleBid(product: AuctionProductData) {
+    setBidLoadingExternalId(product.externalId);
+    try {
+      const res = await fetch("/api/abc-auctions/bid/place", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productUrl: product.productUrl,
+          currentPrice: product.currentPrice,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSnackbar({
+          open: true,
+          message: data.error ?? "Failed to place bid",
+          severity: "error",
+        });
+        return;
+      }
+      setSnackbar({
+        open: true,
+        message: `Bid placed at $${Number(data.bidAmount ?? product.currentPrice + 1).toLocaleString()}`,
+        severity: "success",
+      });
+      setBidProductIds((prev) =>
+        prev.includes(product.externalId) ? prev : [product.externalId, ...prev]
+      );
+      await Promise.all([fetchMatchedProducts(matchExternalIds), fetchBidStatuses()]);
+    } catch {
+      setSnackbar({ open: true, message: "Failed to place bid", severity: "error" });
+    } finally {
+      setBidLoadingExternalId(null);
+    }
+  }
+
   return (
     <ProjectShell title="ABC Auctions" navItems={NAV_ITEMS} searchPlaceholder="Search lots…">
+      {/* ── Header ───────────────────────────────────────────────── */}
       <Stack direction="row" alignItems="center" justifyContent="space-between" mb={3}>
         <Stack direction="row" alignItems="center" spacing={1.5}>
           <FavoriteBorderIcon color="primary" />
@@ -205,7 +359,6 @@ export default function WishlistPage() {
             </Typography>
           )}
         </Stack>
-
         <Button
           variant="outlined"
           size="small"
@@ -219,6 +372,7 @@ export default function WishlistPage() {
         </Button>
       </Stack>
 
+      {/* ── Add rule form ─────────────────────────────────────────── */}
       <Card variant="outlined" sx={{ mb: 2.5 }}>
         <CardContent>
           <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} alignItems="center">
@@ -237,9 +391,11 @@ export default function WishlistPage() {
               placeholder="Leave empty for loose matching"
               fullWidth
               size="small"
-              InputProps={{
-                startAdornment: <InputAdornment position="start">/</InputAdornment>,
-                endAdornment: <InputAdornment position="end">/i</InputAdornment>,
+              slotProps={{
+                input: {
+                  startAdornment: <InputAdornment position="start">/</InputAdornment>,
+                  endAdornment: <InputAdornment position="end">/i</InputAdornment>,
+                },
               }}
             />
             <Button
@@ -257,70 +413,45 @@ export default function WishlistPage() {
         </CardContent>
       </Card>
 
+      {/* ── Matched products as full ProductCards ─────────────────── */}
       {!loading && (
-        <Card variant="outlined" sx={{ mb: 2.5 }}>
-          <CardContent>
-            <Stack direction="row" alignItems="center" spacing={1} mb={1.5}>
-              <Typography variant="subtitle1" fontWeight={700}>
-                Matching Products
-              </Typography>
-              <Chip label={matchedProducts.length} size="small" color="warning" />
-            </Stack>
+        <Box mb={3}>
+          <Stack direction="row" alignItems="center" spacing={1} mb={2}>
+            <Typography variant="subtitle1" fontWeight={700}>
+              Matching Products
+            </Typography>
+            <Chip label={matchExternalIds.length} size="small" color="warning" />
+          </Stack>
 
-            {matchedProducts.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">
-                No matches yet. Click Check now after new lots are published.
-              </Typography>
-            ) : (
-              <Stack spacing={1}>
-                {matchedProducts.map((match) => (
-                  <Card
-                    key={match.externalId}
-                    variant="outlined"
-                    sx={{ borderColor: "warning.main" }}
-                  >
-                    <CardContent sx={{ py: 1.25 }}>
-                      <Stack direction="row" spacing={1.25} alignItems="flex-start">
-                        <Avatar
-                          src={match.imageUrl || undefined}
-                          variant="rounded"
-                          sx={{ width: 56, height: 56, bgcolor: "grey.100", flexShrink: 0 }}
-                        >
-                          <VisibilityIcon fontSize="small" />
-                        </Avatar>
-
-                        <Stack sx={{ flexGrow: 1, minWidth: 0 }} spacing={0.5}>
-                          <Typography variant="body2" fontWeight={600} noWrap>
-                            {match.title}
-                          </Typography>
-                          <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
-                            <Typography variant="caption" color="text.secondary">
-                              Current bid: ${match.currentPrice.toLocaleString()}
-                            </Typography>
-                            <CountdownTimer auctionEndTime={match.auctionEndTime} />
-                          </Stack>
-                        </Stack>
-
-                        <IconButton
-                          size="small"
-                          href={match.productUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          component="a"
-                        >
-                          <OpenInNewIcon fontSize="small" />
-                        </IconButton>
-                      </Stack>
-                    </CardContent>
-                  </Card>
-                ))}
-              </Stack>
-            )}
-          </CardContent>
-        </Card>
+          {matchExternalIds.length === 0 ? (
+            <Alert severity="info">
+              No matches yet. Click &quot;Check now&quot; after new lots are published.
+            </Alert>
+          ) : (
+            <ProductGrid
+              products={matchedProducts}
+              watched={watched}
+              wishlistMatchExternalIds={matchExternalIds}
+              bidProductIds={bidProductIds}
+              bidStatusMap={bidStatusMap}
+              loading={matchedLoading}
+              onWatch={(product) => setWatchDialog({ open: true, product })}
+              onBid={handleBid}
+              bidLoadingExternalId={bidLoadingExternalId}
+            />
+          )}
+        </Box>
       )}
 
-      {!loading && <Divider sx={{ mb: 2 }} />}
+      <Divider sx={{ mb: 2.5 }} />
+
+      {/* ── Rules list ───────────────────────────────────────────── */}
+      <Stack direction="row" alignItems="center" spacing={1} mb={1.5}>
+        <Typography variant="subtitle1" fontWeight={700}>
+          Rules
+        </Typography>
+        <Chip label={wishlist.length} size="small" color="default" />
+      </Stack>
 
       {loading ? (
         <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}>
@@ -360,7 +491,6 @@ export default function WishlistPage() {
                       </Typography>
                     )}
                   </Stack>
-
                   <Tooltip title={item.isActive ? "Pause rule" : "Enable rule"}>
                     <Switch
                       checked={item.isActive}
@@ -378,6 +508,14 @@ export default function WishlistPage() {
           ))}
         </Stack>
       )}
+
+      <WatchDialog
+        open={watchDialog.open}
+        product={watchDialog.product}
+        onClose={() => setWatchDialog({ open: false, product: null })}
+        onConfirm={handleWatch}
+        loading={watchLoading}
+      />
 
       <Snackbar
         open={snackbar.open}

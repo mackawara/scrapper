@@ -1,7 +1,43 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import Box from "@mui/material/Box";
+import Card from "@mui/material/Card";
+import CardContent from "@mui/material/CardContent";
+import Chip from "@mui/material/Chip";
+import CircularProgress from "@mui/material/CircularProgress";
+import FormControl from "@mui/material/FormControl";
+import InputLabel from "@mui/material/InputLabel";
+import MenuItem from "@mui/material/MenuItem";
+import Paper from "@mui/material/Paper";
+import Select from "@mui/material/Select";
+import Stack from "@mui/material/Stack";
+import Table from "@mui/material/Table";
+import TableBody from "@mui/material/TableBody";
+import TableCell from "@mui/material/TableCell";
+import TableContainer from "@mui/material/TableContainer";
+import TableHead from "@mui/material/TableHead";
+import TableRow from "@mui/material/TableRow";
+import Typography from "@mui/material/Typography";
+import GavelIcon from "@mui/icons-material/Gavel";
+import CategoryIcon from "@mui/icons-material/Category";
+import FavoriteBorderIcon from "@mui/icons-material/FavoriteBorder";
+import GridViewIcon from "@mui/icons-material/GridView";
+import LocalFireDepartmentIcon from "@mui/icons-material/LocalFireDepartment";
+import SettingsIcon from "@mui/icons-material/Settings";
+import VisibilityIcon from "@mui/icons-material/Visibility";
+import ProjectShell, { NavItem } from "@/components/ProjectShell";
+import ProductCard from "@/components/abc-auctions/ProductCard";
+import { AuctionProductData, BidStatusData, WatchedProductData } from "@/lib/abc-auctions/types";
+
+const NAV_ITEMS: NavItem[] = [
+  { label: "Browse", href: "/abc-auctions", icon: <GridViewIcon fontSize="small" /> },
+  { label: "Categories", href: "/abc-auctions/categories", icon: <CategoryIcon fontSize="small" /> },
+  { label: "Watch List", href: "/abc-auctions/watchlist", icon: <VisibilityIcon fontSize="small" /> },
+  { label: "Bids", href: "/abc-auctions/bids", icon: <LocalFireDepartmentIcon fontSize="small" /> },
+  { label: "Wish List", href: "/abc-auctions/wishlist", icon: <FavoriteBorderIcon fontSize="small" /> },
+  { label: "Settings", href: "/abc-auctions/settings", icon: <SettingsIcon fontSize="small" /> },
+];
 
 interface BidStats {
   total: number;
@@ -20,7 +56,6 @@ interface BidStats {
 interface Bid {
   _id: string;
   watchedProductId: string;
-  productTitle?: string;
   bidAmount: number;
   status: "winning" | "losing" | "overMax" | "failed" | "outbid";
   success: boolean;
@@ -30,38 +65,65 @@ interface Bid {
   error?: string;
 }
 
-interface WatchedProduct {
-  _id: string;
-  title: string;
-  productUrl: string;
+const STATUS_CHIP_COLOR: Record<string, "success" | "error" | "warning" | "default"> = {
+  winning: "success",
+  losing: "error",
+  overMax: "warning",
+  failed: "default",
+  outbid: "error",
+};
+
+function toAuctionProduct(w: WatchedProductData, currentPrice?: number): AuctionProductData {
+  return {
+    externalId: w.externalId,
+    title: w.title,
+    imageUrl: w.imageUrl,
+    currentPrice: currentPrice ?? w.lastBidAmount ?? 0,
+    maxPrice: w.maxBid,
+    auctionEndTime: w.auctionEndTime,
+    lotNumber: "",
+    category: "",
+    productUrl: w.productUrl,
+    scrapedAt: w.createdAt,
+  };
 }
 
 export default function BidsPage() {
-  const [watchedProducts, setWatchedProducts] = useState<WatchedProduct[]>([]);
+  const [watchedProducts, setWatchedProducts] = useState<WatchedProductData[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string>("");
   const [stats, setStats] = useState<BidStats | null>(null);
   const [bids, setBids] = useState<Bid[]>([]);
   const [loading, setLoading] = useState(false);
+  const [liveCurrentPrice, setLiveCurrentPrice] = useState<number | null>(null);
 
-  // Load watched products
   useEffect(() => {
     const fetchWatchedProducts = async () => {
       try {
         const res = await fetch("/api/abc-auctions/watch");
         const data = await res.json();
-        setWatchedProducts(data.watched || []);
-        if (data.watched?.[0]) {
-          setSelectedProductId(data.watched[0]._id);
-        }
+        const watched: WatchedProductData[] = data.watched || [];
+        setWatchedProducts(watched);
+        if (watched[0]) setSelectedProductId(watched[0]._id);
       } catch (err) {
         console.error("Failed to fetch watched products", err);
       }
     };
-
     fetchWatchedProducts();
   }, []);
 
-  // Load stats and bids for selected product
+  // Fetch live current price whenever the selected product changes
+  useEffect(() => {
+    const product = watchedProducts.find((p) => p._id === selectedProductId);
+    if (!product) return;
+    setLiveCurrentPrice(null);
+    fetch(`/api/abc-auctions/products/live?externalIds=${product.externalId}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.products?.[0]) setLiveCurrentPrice(data.products[0].currentPrice);
+      })
+      .catch(() => {});
+  }, [selectedProductId, watchedProducts]);
+
   useEffect(() => {
     if (!selectedProductId) return;
 
@@ -72,10 +134,8 @@ export default function BidsPage() {
           fetch(`/api/abc-auctions/bids/stats?watchedProductId=${selectedProductId}`),
           fetch(`/api/abc-auctions/bids?watchedProductId=${selectedProductId}&limit=50`),
         ]);
-
         const statsData = await statsRes.json();
         const bidsData = await bidsRes.json();
-
         setStats(statsData.stats);
         setBids(bidsData.bids || []);
       } catch (err) {
@@ -86,184 +146,196 @@ export default function BidsPage() {
     };
 
     fetchData();
-    const interval = setInterval(fetchData, 10000); // Refresh every 10s
-
+    const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
   }, [selectedProductId]);
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "winning":
-        return "bg-green-100 text-green-800";
-      case "losing":
-        return "bg-red-100 text-red-800";
-      case "overMax":
-        return "bg-yellow-100 text-yellow-800";
-      case "failed":
-        return "bg-gray-100 text-gray-800";
-      default:
-        return "bg-blue-100 text-blue-800";
-    }
-  };
+  const selectedProduct = watchedProducts.find((p) => p._id === selectedProductId);
+
+  const bidStatus: BidStatusData | undefined = stats
+    ? {
+        status: stats.currentStatus,
+        amount: stats.latestBidAmount,
+        currentPrice: stats.currentPriceNow,
+        maxBid: stats.maxBid,
+        isOutbid: stats.isOutbid,
+      }
+    : undefined;
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-6xl mx-auto">
-        <h1 className="text-3xl font-bold text-gray-900 mb-8">Bids Tracker</h1>
+    <ProjectShell title="ABC Auctions" navItems={NAV_ITEMS}>
+      <Stack direction="row" alignItems="center" spacing={1.5} mb={3}>
+        <GavelIcon color="primary" />
+        <Typography variant="h5" fontWeight={700}>
+          Bids Tracker
+        </Typography>
+      </Stack>
 
-        {/* Product selector */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Select Product
-          </label>
-          <select
-            value={selectedProductId}
-            onChange={(e) => setSelectedProductId(e.target.value)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-          >
-            <option value="">Choose a product...</option>
-            {watchedProducts.map((p) => (
-              <option key={p._id} value={p._id}>
-                {p.title}
-              </option>
-            ))}
-          </select>
-        </div>
+      <FormControl size="small" sx={{ mb: 4, width: 480, maxWidth: "100%" }}>
+        <InputLabel>Select Product</InputLabel>
+        <Select
+          value={selectedProductId}
+          label="Select Product"
+          onChange={(e) => setSelectedProductId(e.target.value)}
+        >
+          {watchedProducts.map((p) => (
+            <MenuItem key={p._id} value={p._id}>
+              {p.title}
+            </MenuItem>
+          ))}
+        </Select>
+      </FormControl>
 
-        {selectedProductId && stats && (
-          <>
-            {/* Stats cards */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
-              <div className="bg-white p-4 rounded-lg shadow">
-                <div className="text-2xl font-bold text-blue-600">{stats.total}</div>
-                <div className="text-sm text-gray-600">Total Bids</div>
-              </div>
-              <div className="bg-white p-4 rounded-lg shadow">
-                <div className="text-2xl font-bold text-green-600">{stats.winning}</div>
-                <div className="text-sm text-gray-600">Winning</div>
-              </div>
-              <div className="bg-white p-4 rounded-lg shadow">
-                <div className="text-2xl font-bold text-red-600">{stats.losing}</div>
-                <div className="text-sm text-gray-600">Losing</div>
-              </div>
-              <div className="bg-white p-4 rounded-lg shadow">
-                <div className="text-2xl font-bold text-yellow-600">{stats.overMax}</div>
-                <div className="text-sm text-gray-600">Over Max</div>
-              </div>
-              <div className="bg-white p-4 rounded-lg shadow">
-                <div className="text-2xl font-bold text-gray-600">{stats.failed}</div>
-                <div className="text-sm text-gray-600">Failed</div>
-              </div>
-            </div>
+      {selectedProduct ? (
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", md: "300px 1fr" },
+            gap: 3,
+            alignItems: "start",
+          }}
+        >
+          {/* Product card */}
+          <ProductCard
+            product={toAuctionProduct(selectedProduct, liveCurrentPrice ?? stats?.currentPriceNow)}
+            isWatched={true}
+            bidderStatus={selectedProduct.bidderStatus}
+            bidStatus={bidStatus}
+            onWatch={() => {}}
+          />
 
-            {/* Current status */}
-            <div className="bg-white p-6 rounded-lg shadow mb-8">
-              <h2 className="text-lg font-semibold mb-4">Current Status</h2>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <div className="text-sm text-gray-600">Status</div>
-                  <div className={`inline-block px-3 py-1 rounded-full text-sm font-semibold ${getStatusColor(stats.currentStatus || '')}`}>
-                    {stats.currentStatus || "—"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-sm text-gray-600">Latest Bid</div>
-                  <div className="text-lg font-semibold">US${stats.latestBidAmount || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-gray-600">Max Bid</div>
-                  <div className="text-lg font-semibold">US${stats.maxBid || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-gray-600">Current Price</div>
-                  <div className="text-lg font-semibold">US${stats.currentPriceNow || "—"}</div>
-                </div>
-              </div>
-              {stats.isOutbid && (
-                <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded text-red-800 text-sm">
+          {/* Stats + bid history */}
+          <Stack spacing={3}>
+            {/* Stats row */}
+            <Box
+              sx={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))",
+                gap: 2,
+              }}
+            >
+              {[
+                { label: "Total Bids", value: stats?.total ?? "—", color: "primary.main" },
+                { label: "Winning", value: stats?.winning ?? "—", color: "success.main" },
+                { label: "Losing", value: stats?.losing ?? "—", color: "error.main" },
+                { label: "Over Max", value: stats?.overMax ?? "—", color: "warning.main" },
+                { label: "Failed", value: stats?.failed ?? "—", color: "text.secondary" },
+              ].map(({ label, value, color }) => (
+                <Card key={label} elevation={1}>
+                  <CardContent sx={{ py: 1.5, px: 2, "&:last-child": { pb: 1.5 } }}>
+                    <Typography variant="h5" fontWeight={700} color={color}>
+                      {value}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {label}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              ))}
+            </Box>
+
+            {/* Outbid alert */}
+            {stats?.isOutbid && (
+              <Paper
+                variant="outlined"
+                sx={{ p: 2, borderColor: "error.main", bgcolor: "error.50" }}
+              >
+                <Typography variant="body2" color="error.dark" fontWeight={600}>
                   ⚠️ You have been outbid in the last 10 minutes!
-                </div>
-              )}
-            </div>
+                </Typography>
+              </Paper>
+            )}
 
-            {/* Bids table */}
-            <div className="bg-white rounded-lg shadow overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-200">
-                <h2 className="text-lg font-semibold">Bid History</h2>
-              </div>
+            {/* Bid history */}
+            <Card elevation={1}>
+              <Box sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider" }}>
+                <Typography variant="subtitle1" fontWeight={600}>
+                  Bid History
+                </Typography>
+              </Box>
+
               {loading ? (
-                <div className="p-6 text-center text-gray-500">Loading bids...</div>
+                <Stack alignItems="center" justifyContent="center" py={5}>
+                  <CircularProgress size={32} />
+                </Stack>
               ) : bids.length === 0 ? (
-                <div className="p-6 text-center text-gray-500">No bids placed yet</div>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ p: 3, textAlign: "center" }}
+                >
+                  No bids placed yet
+                </Typography>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead className="bg-gray-50 border-b border-gray-200">
-                      <tr>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
-                          Time
-                        </th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
-                          Bid Amount
-                        </th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
-                          Status
-                        </th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
-                          Price at Bid
-                        </th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
-                          Current Price
-                        </th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
-                          Notes
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Time</TableCell>
+                        <TableCell>Bid Amount</TableCell>
+                        <TableCell>Status</TableCell>
+                        <TableCell>Price at Bid</TableCell>
+                        <TableCell>Current Price</TableCell>
+                        <TableCell>Notes</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
                       {bids.map((bid) => (
-                        <tr key={bid._id} className="border-b border-gray-200 hover:bg-gray-50">
-                          <td className="px-6 py-4 text-sm text-gray-600">
-                            {new Date(bid.createdAt).toLocaleString()}
-                          </td>
-                          <td className="px-6 py-4 text-sm font-semibold text-gray-900">
-                            US${bid.bidAmount}
-                          </td>
-                          <td className="px-6 py-4 text-sm">
-                            <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${getStatusColor(bid.status)}`}>
-                              {bid.status}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-sm text-gray-600">
-                            US${bid.currentPriceAtBid || "—"}
-                          </td>
-                          <td className="px-6 py-4 text-sm text-gray-600">
-                            US${bid.currentPriceNow || "—"}
-                          </td>
-                          <td className="px-6 py-4 text-sm text-gray-600">
+                        <TableRow key={bid._id} hover>
+                          <TableCell>
+                            <Typography variant="caption" color="text.secondary">
+                              {new Date(bid.createdAt).toLocaleString()}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" fontWeight={600}>
+                              US${bid.bidAmount}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              label={bid.status}
+                              size="small"
+                              color={STATUS_CHIP_COLOR[bid.status] ?? "default"}
+                              sx={{ fontWeight: 600, fontSize: 11 }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" color="text.secondary">
+                              {bid.currentPriceAtBid ? `US$${bid.currentPriceAtBid}` : "—"}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" color="text.secondary">
+                              {bid.currentPriceNow ? `US$${bid.currentPriceNow}` : "—"}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
                             {!bid.success && bid.error && (
-                              <span className="text-red-600">{bid.error}</span>
+                              <Typography variant="caption" color="error">
+                                {bid.error}
+                              </Typography>
                             )}
                             {bid.status === "losing" && (
-                              <span className="text-yellow-600">Outbid</span>
+                              <Typography variant="caption" color="warning.main">
+                                Outbid
+                              </Typography>
                             )}
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
+                    </TableBody>
+                  </Table>
+                </TableContainer>
               )}
-            </div>
-          </>
-        )}
-
-        {!selectedProductId && (
-          <div className="bg-white p-6 rounded-lg shadow text-center text-gray-500">
-            Select a product to view bid history
-          </div>
-        )}
-      </div>
-    </div>
+            </Card>
+          </Stack>
+        </Box>
+      ) : (
+        <Paper variant="outlined" sx={{ p: 6, textAlign: "center" }}>
+          <Typography color="text.secondary">Select a product to view bid history</Typography>
+        </Paper>
+      )}
+    </ProjectShell>
   );
 }

@@ -4,13 +4,34 @@ import AuctionProduct from "@/models/AuctionProduct";
 import { fetchAllLots, queryLots } from "@/lib/abc-auctions/api-scraper";
 import logger from "@/lib/logger";
 
+const ALLOWED_SORT_FIELDS = ["auctionEndTime", "currentPrice", "title", "lotNumber"] as const;
+type SortField = (typeof ALLOWED_SORT_FIELDS)[number];
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = req.nextUrl;
-    const category = searchParams.get("category");
     const search = searchParams.get("search");
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
     const limit = Math.min(100, parseInt(searchParams.get("limit") ?? "24"));
+
+    // Category filter — accepts a single ?category= or multiple comma-separated ?categories=
+    const categoriesParam = searchParams.get("categories");
+    const singleCategory = searchParams.get("category");
+    const categoryList = categoriesParam
+      ? categoriesParam
+          .split(",")
+          .map((c) => c.trim())
+          .filter(Boolean)
+      : singleCategory
+        ? [singleCategory]
+        : [];
+
+    // Sort options
+    const sortByRaw = searchParams.get("sortBy") ?? "auctionEndTime";
+    const sortBy: SortField = ALLOWED_SORT_FIELDS.includes(sortByRaw as SortField)
+      ? (sortByRaw as SortField)
+      : "auctionEndTime";
+    const sortDir = searchParams.get("sortOrder") === "desc" ? -1 : 1;
 
     // Date filters
     const endAfter = searchParams.get("endAfter");
@@ -27,13 +48,23 @@ export async function GET(req: NextRequest) {
 
         // Apply client-side filters for API results
         let filtered = products;
-        if (category) filtered = filtered.filter((p) => p.category === category);
+        if (categoryList.length > 0)
+          filtered = filtered.filter((p) => categoryList.includes(p.category));
         if (endAfter)
           filtered = filtered.filter((p) => new Date(p.auctionEndTime) >= new Date(endAfter));
         if (endBefore)
           filtered = filtered.filter((p) => new Date(p.auctionEndTime) <= new Date(endBefore));
         if (!isNaN(minPrice)) filtered = filtered.filter((p) => p.currentPrice >= minPrice);
         if (!isNaN(maxPrice)) filtered = filtered.filter((p) => p.currentPrice <= maxPrice);
+
+        // Sort results
+        filtered.sort((a, b) => {
+          const av = a[sortBy] ?? "";
+          const bv = b[sortBy] ?? "";
+          if (av < bv) return -sortDir;
+          if (av > bv) return sortDir;
+          return 0;
+        });
 
         return NextResponse.json({
           products: filtered,
@@ -58,8 +89,24 @@ export async function GET(req: NextRequest) {
       await upsertProducts(scraped);
     }
 
+    // ExternalIds filter — used by wishlist to fetch full product data for matched lots
+    const externalIdsParam = searchParams.get("externalIds");
+    const externalIdList = externalIdsParam
+      ? externalIdsParam
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean)
+      : [];
+
     const filter: Record<string, unknown> = {};
-    if (category) filter.category = category;
+    if (externalIdList.length > 0) {
+      filter.externalId = { $in: externalIdList };
+    }
+    if (categoryList.length === 1) {
+      filter.category = categoryList[0];
+    } else if (categoryList.length > 1) {
+      filter.category = { $in: categoryList };
+    }
 
     // Date range filter
     if (endAfter || endBefore) {
@@ -76,7 +123,11 @@ export async function GET(req: NextRequest) {
     }
 
     const [products, total] = await Promise.all([
-      AuctionProduct.find(filter).sort({ auctionEndTime: 1 }).skip(skip).limit(limit).lean(),
+      AuctionProduct.find(filter)
+        .sort({ [sortBy]: sortDir })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
       AuctionProduct.countDocuments(filter),
     ]);
 

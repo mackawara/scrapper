@@ -71,7 +71,7 @@ function mapLot(lot: ApiLot, campaignName: string): AuctionProductData {
     auctionEndTime: lot.EndDate,
     lotNumber: String(lot.LotNumber),
     category: campaignName,
-    productUrl: `${SITE_BASE}/lots/${lot.Id}`,
+    productUrl: `${SITE_BASE}/lot/${lot.Type}/${lot.LotNumber}`,
     scrapedAt: new Date().toISOString(),
   };
 }

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
-import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import CircularProgress from "@mui/material/CircularProgress";
 import Pagination from "@mui/material/Pagination";
@@ -134,7 +133,15 @@ export default function AbcAuctionsPage() {
           : debouncedSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         params.set("search", pattern);
       }
-      if (selectedCategories.length === 1) params.set("category", selectedCategories[0]);
+      if (selectedCategories.length === 1) {
+        params.set("category", selectedCategories[0]);
+      } else if (selectedCategories.length > 1) {
+        params.set("categories", selectedCategories.join(","));
+      }
+
+      // Sort
+      params.set("sortBy", filters.sortBy);
+      params.set("sortOrder", filters.sortOrder);
 
       // Date filters
       if (filters.endAfter) params.set("endAfter", filters.endAfter);
@@ -371,22 +378,8 @@ export default function AbcAuctionsPage() {
         </Button>
       </Stack>
 
-      {/* Multi-category notice */}
-      {selectedCategories.length > 1 && (
-        <Box mb={2}>
-          <Alert severity="info" sx={{ py: 0.5 }}>
-            Showing results for {selectedCategories.length} categories. Select a single category to
-            filter server-side.
-          </Alert>
-        </Box>
-      )}
-
       <ProductGrid
-        products={
-          selectedCategories.length > 1
-            ? products.filter((p) => selectedCategories.includes(p.category))
-            : products
-        }
+        products={products}
         watched={watched}
         wishlistMatchExternalIds={wishlistMatchExternalIds}
         bidProductIds={bidProductIds}
