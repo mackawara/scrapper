@@ -1,13 +1,29 @@
+"use client";
+
+import { Suspense } from "react";
+import { signIn } from "next-auth/react";
+import { useSearchParams } from "next/navigation";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
-import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
+import Alert from "@mui/material/Alert";
 import GitHubIcon from "@mui/icons-material/GitHub";
-import { signIn } from "@/auth";
 
 export default function SignInPage() {
+  return (
+    <Suspense>
+      <SignInContent />
+    </Suspense>
+  );
+}
+
+function SignInContent() {
+  const searchParams = useSearchParams();
+  const callbackUrl = searchParams.get("callbackUrl") ?? "/abc-auctions";
+  const error = searchParams.get("error");
+
   return (
     <Box
       sx={{
@@ -20,53 +36,44 @@ export default function SignInPage() {
     >
       <Card
         elevation={8}
-        sx={{
-          maxWidth: 400,
-          width: "100%",
-          mx: 2,
-          borderRadius: 3,
-          overflow: "visible",
-        }}
+        sx={{ maxWidth: 420, width: "100%", mx: 2, borderRadius: 3 }}
       >
-        <CardContent sx={{ p: 5, textAlign: "center" }}>
-          <Typography variant="h4" fontWeight={800} gutterBottom>
+        <CardContent sx={{ p: 5 }}>
+          <Typography variant="h4" fontWeight={800} textAlign="center" gutterBottom>
             Scrapper
           </Typography>
-          <Typography variant="body2" color="text.secondary" mb={4}>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            textAlign="center"
+            mb={4}
+          >
             Sign in to access the auction scraper
           </Typography>
 
-          <form
-            action={async () => {
-              "use server";
-              await signIn("github", { redirectTo: "/abc-auctions" });
+          {error === "AccessDenied" && (
+            <Alert severity="error" sx={{ mb: 3 }}>
+              Your GitHub account is not on the approved list.
+            </Alert>
+          )}
+
+          <Button
+            variant="contained"
+            fullWidth
+            startIcon={<GitHubIcon />}
+            onClick={() => signIn("github", { callbackUrl })}
+            sx={{
+              py: 1.5,
+              borderRadius: 2,
+              textTransform: "none",
+              fontWeight: 600,
+              fontSize: 15,
+              bgcolor: "#24292e",
+              "&:hover": { bgcolor: "#1b1f23" },
             }}
           >
-            <Button
-              type="submit"
-              variant="contained"
-              size="large"
-              fullWidth
-              startIcon={<GitHubIcon />}
-              sx={{
-                py: 1.5,
-                bgcolor: "#24292e",
-                "&:hover": { bgcolor: "#1b1f23" },
-                borderRadius: 2,
-                textTransform: "none",
-                fontSize: 16,
-                fontWeight: 600,
-              }}
-            >
-              Sign in with GitHub
-            </Button>
-          </form>
-
-          <Stack direction="row" justifyContent="center" mt={3}>
-            <Typography variant="caption" color="text.disabled">
-              Powered by NextAuth.js
-            </Typography>
-          </Stack>
+            Sign in with GitHub
+          </Button>
         </CardContent>
       </Card>
     </Box>
