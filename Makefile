@@ -1,30 +1,53 @@
-# Stop and remove the existing container if running
+IMAGE   ?= mackawara/scrapper
+TAG     ?= latest
+PLATFORM_ARM  = linux/arm64
+PLATFORM_AMD  = linux/amd64
+PLATFORM_MULTI = linux/arm64,linux/amd64
+
+# ── Local helpers ─────────────────────────────────────────────────────────────
+
 stop:
 	docker stop scrapper || true
 	docker rm scrapper || true
 
-# Remove the existing image
-clean:
+clean: stop
 	docker rmi scrapper || true
 
-# Build the Docker image with no cache
-build: stop
-	docker buildx build --platform linux/amd64  --load -t scrapper .
-
-# Build the Docker image with no cache
-build-no-cache: stop clean
-	docker buildx build --platform linux/amd64  --load --no-cache -t scrapper .
-
-# Run the container, ensuring the correct port and env file
-run: stop
-	docker run --rm --name scrapper -p 4000:4000 --env-file .env scrapper
-
-# Run the container interactively for debugging
-run-it: stop
-	docker run --rm -it scrapper sh
-prune : stop 
+prune: stop
 	docker system prune -a
 
-push:
-	docker tag scrapper mackawara/scrapper:latest
-	docker push mackawara/scrapper:latest
+# ── Build for Oracle ARM (linux/arm64) ────────────────────────────────────────
+
+build: stop
+	docker buildx build --platform $(PLATFORM_ARM) --load -t scrapper .
+
+build-no-cache: stop clean
+	docker buildx build --platform $(PLATFORM_ARM) --load --no-cache -t scrapper .
+
+# ── Build for local x86 dev machine ───────────────────────────────────────────
+
+build-amd: stop
+	docker buildx build --platform $(PLATFORM_AMD) --load -t scrapper .
+
+# ── Run locally ───────────────────────────────────────────────────────────────
+
+run: stop
+	docker run --rm --name scrapper -p 3000:3000 --env-file .env scrapper
+
+run-it: stop
+	docker run --rm -it scrapper sh
+
+# ── Push to Docker Hub ────────────────────────────────────────────────────────
+
+# Push ARM64 image (for Oracle VM deployment)
+push-arm:
+	docker buildx build --platform $(PLATFORM_ARM) \
+		--push -t $(IMAGE):$(TAG) -t $(IMAGE):arm64 .
+
+# Push multi-platform image (ARM64 + AMD64)
+push-multi:
+	docker buildx build --platform $(PLATFORM_MULTI) \
+		--push -t $(IMAGE):$(TAG) .
+
+# Legacy alias
+push: push-arm
