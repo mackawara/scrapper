@@ -30,7 +30,7 @@ interface ApiLot {
   StartDate: string;
   EndDate: string;
   Price: number | null;
-  Status: number;
+  Status: 1 | 2; // 1 = open, 2 = closed
   STC: boolean;
   SaleStatus: number;
   Watching: boolean;
@@ -61,6 +61,10 @@ interface ApiSearchResponse {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+function isOpenLot(lot: ApiLot): boolean {
+  return lot.Status === 1;
+}
+
 function mapLot(lot: ApiLot, campaignName: string): AuctionProductData {
   return {
     externalId: String(lot.Id),
@@ -71,7 +75,7 @@ function mapLot(lot: ApiLot, campaignName: string): AuctionProductData {
     auctionEndTime: lot.EndDate,
     lotNumber: String(lot.LotNumber),
     category: campaignName,
-    productUrl: `${SITE_BASE}/lot/${lot.Type}/${lot.LotNumber}`,
+    productUrl: `${SITE_BASE}/lot/${lot.Type}/${lot.Id}`,
     scrapedAt: new Date().toISOString(),
   };
 }
@@ -134,7 +138,7 @@ export async function queryLots(
   const campaignFacet = data.Meta.Facets.find((f) => f.Name === "campaign");
   const defaultCampaign = campaignFacet?.Buckets[0]?.Value ?? "Uncategorized";
 
-  const products = data.List.map((lot) => mapLot(lot, defaultCampaign));
+  const products = data.List.filter(isOpenLot).map((lot) => mapLot(lot, defaultCampaign));
 
   return { products, total: data.Meta.Count };
 }
@@ -187,7 +191,7 @@ export async function fetchLotsForCampaign(campaignName: string): Promise<Auctio
       facets: { campaign: [campaignName] },
       cursor,
     });
-    const mapped = data.List.map((lot) => mapLot(lot, campaignName));
+    const mapped = data.List.filter(isOpenLot).map((lot) => mapLot(lot, campaignName));
     results.push(...mapped);
 
     logger.debug("🔵 Page fetched", {
@@ -216,7 +220,7 @@ export async function fetchAllLots(): Promise<AuctionProductData[]> {
   if (campaigns.length === 0) {
     logger.warn("🟡 No campaigns found — fetching all lots without filter");
     const data = await callSearchApi({});
-    return data.List.map((lot) => mapLot(lot, "Uncategorized"));
+    return data.List.filter(isOpenLot).map((lot) => mapLot(lot, "Uncategorized"));
   }
 
   const results: AuctionProductData[] = [];

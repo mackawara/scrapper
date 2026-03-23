@@ -240,6 +240,20 @@ export default function AbcAuctionsPage() {
     fetchWishlistMatches,
   ]);
 
+  // Poll every 15s when any product is in its final 10 minutes
+  const fetchProductsRef = useRef(fetchProducts);
+  fetchProductsRef.current = fetchProducts;
+  useEffect(() => {
+    const TEN_MIN = 10 * 60 * 1000;
+    const hasClosingSoon = products.some((p) => {
+      const diff = new Date(p.auctionEndTime).getTime() - Date.now();
+      return diff > 0 && diff < TEN_MIN;
+    });
+    if (!hasClosingSoon) return;
+    const id = setInterval(() => fetchProductsRef.current(), 15_000);
+    return () => clearInterval(id);
+  }, [products]);
+
   async function handleScrape() {
     setScraping(true);
     try {
@@ -293,7 +307,7 @@ export default function AbcAuctionsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          productUrl: product.productUrl,
+          externalId: product.externalId,
           currentPrice: product.currentPrice,
         }),
       });
@@ -387,6 +401,7 @@ export default function AbcAuctionsPage() {
         loading={loading}
         onWatch={(product) => setWatchDialog({ open: true, product })}
         onBid={handleBid}
+        onAuctionClose={fetchProducts}
         bidLoadingExternalId={bidLoadingExternalId}
       />
 

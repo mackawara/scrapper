@@ -1,21 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import logger from "@/lib/logger";
-import { placeManualBid, hasBidderCredentials } from "@/lib/abc-auctions/bidder";
-import { getTokenInfo } from "@/lib/abc-auctions/api-client";
+import { placeBidApi, getTokenInfo, getAuthToken } from "@/lib/abc-auctions/api-client";
 
 export async function POST(req: NextRequest) {
   try {
-    const { productUrl, currentPrice, bidAmount } = await req.json();
+    const { externalId, currentPrice, bidAmount } = await req.json();
 
-    if (!productUrl) {
-      return NextResponse.json(
-        { error: "productUrl is required" },
-        { status: 400 }
-      );
+    if (!externalId) {
+      return NextResponse.json({ error: "externalId is required" }, { status: 400 });
     }
 
-    // Check for valid auth token
-    if (!hasBidderCredentials()) {
+    if (!getAuthToken()) {
       const tokenInfo = getTokenInfo();
       return NextResponse.json(
         {
@@ -34,40 +29,19 @@ export async function POST(req: NextRequest) {
       : fallbackAmount;
 
     if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
-      return NextResponse.json(
-        { error: "A valid bid amount is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "A valid bid amount is required" }, { status: 400 });
     }
 
-    const success = await placeManualBid(
-      String(productUrl),
-      Math.floor(normalizedAmount)
-    );
+    const result = await placeBidApi(String(externalId), Math.floor(normalizedAmount));
 
-    if (!success) {
-      return NextResponse.json(
-        {
-          error: "Bid submission failed. Check token validity and try again.",
-          tokenInfo: getTokenInfo(),
-        },
-        { status: 502 }
-      );
+    if (!result.success) {
+      return NextResponse.json({ error: result.error, tokenInfo: getTokenInfo() }, { status: 502 });
     }
 
-    logger.info("🟢 Manual bid placed", {
-      productUrl,
-      bidAmount: Math.floor(normalizedAmount),
-    });
-    return NextResponse.json({
-      status: "bid_placed",
-      bidAmount: Math.floor(normalizedAmount),
-    });
+    logger.info("🟢 Manual bid placed", { externalId, bidAmount: result.bidAmount });
+    return NextResponse.json({ status: "bid_placed", bidAmount: result.bidAmount });
   } catch (err) {
     logger.error("🔴 POST /api/abc-auctions/bid/place failed", { err });
-    return NextResponse.json(
-      { error: "Failed to place bid" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to place bid" }, { status: 500 });
   }
 }

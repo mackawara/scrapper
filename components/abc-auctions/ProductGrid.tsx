@@ -15,6 +15,7 @@ interface ProductGridProps {
   loading: boolean;
   onWatch: (product: AuctionProductData) => void;
   onBid: (product: AuctionProductData) => void;
+  onAuctionClose?: () => void;
   bidLoadingExternalId?: string | null;
 }
 
@@ -39,6 +40,7 @@ export default function ProductGrid({
   loading,
   onWatch,
   onBid,
+  onAuctionClose,
   bidLoadingExternalId = null,
 }: ProductGridProps) {
   const watchedMap = new Map(watched.map((w) => [w.externalId, w]));
@@ -58,7 +60,7 @@ export default function ProductGrid({
     return bPriority - aPriority;
   });
 
-  if (loading) {
+  if (loading && products.length === 0) {
     return (
       <Grid container spacing={2}>
         {Array.from({ length: 12 }).map((_, i) => (
@@ -85,6 +87,7 @@ export default function ProductGrid({
               bidStatus={bidStatus}
               onWatch={() => onWatch(product)}
               onBid={() => onBid(product)}
+              onAuctionClose={onAuctionClose}
               bidLoading={bidLoadingExternalId === product.externalId}
             />
           </Grid>

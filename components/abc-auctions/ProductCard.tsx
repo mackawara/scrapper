@@ -25,6 +25,7 @@ interface ProductCardProps {
   bidStatus?: BidStatusData;
   onWatch: () => void;
   onBid?: () => void;
+  onAuctionClose?: () => void;
   bidLoading?: boolean;
 }
 
@@ -36,6 +37,7 @@ export default function ProductCard({
   bidStatus,
   onWatch,
   onBid,
+  onAuctionClose,
   bidLoading = false,
 }: ProductCardProps) {
   return (
@@ -121,7 +123,7 @@ export default function ProductCard({
           <Typography variant="caption" color="text.secondary">
             Closes in
           </Typography>
-          <CountdownTimer auctionEndTime={product.auctionEndTime} />
+          <CountdownTimer auctionEndTime={product.auctionEndTime} onClose={onAuctionClose} />
         </Stack>
       </CardContent>
 

@@ -426,13 +426,13 @@ export interface BidResult {
 /**
  * Place a bid using the direct API call.
  *
- * Endpoint: GET /bids/place?id={lotId}&amount={amount}
+ * Endpoint: GET /bids/place?id={externalId}&amount={amount}
  * Requires: Bearer token in Authorization header
  *
  * The amount is automatically snapped to the nearest valid bid increment.
  */
 export async function placeBidApi(
-  productUrl: string,
+  externalId: string,
   amount: number
 ): Promise<BidResult> {
   const token = getAuthToken();
@@ -443,24 +443,16 @@ export async function placeBidApi(
     };
   }
 
-  // Resolve the AuctionLotId (the bid API uses this, NOT the URL id).
-  // Uses a permanent cache so we only hit the API once per lot.
-  const auctionLotId = await getAuctionLotId(productUrl);
-  if (!auctionLotId) {
-    return { success: false, error: `Could not resolve AuctionLotId for: ${productUrl}` };
-  }
-
   // Snap to a valid bid amount
   const bidAmount = snapToValidBid(amount);
   if (bidAmount <= 0) {
     return { success: false, error: `Invalid bid amount after snapping: ${amount} → ${bidAmount}` };
   }
 
-  const url = `${API_BASE}/bids/place?id=${auctionLotId}&amount=${bidAmount}`;
+  const url = `${API_BASE}/bids/place?id=${externalId}&amount=${bidAmount}`;
 
   logger.info("🟢 Placing bid via API", {
-    auctionLotId,
-    urlLotId: parseLotUrl(productUrl)?.id,
+    externalId,
     amount: bidAmount,
     url,
   });
@@ -485,7 +477,7 @@ export async function placeBidApi(
 
     if (res.ok) {
       logger.info("🟢 Bid placed successfully via API", {
-        auctionLotId,
+        externalId,
         amount: bidAmount,
         response: data,
       });

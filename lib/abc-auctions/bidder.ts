@@ -1,46 +1,28 @@
-/**
- * ABC Auctions Bidder
- *
- * Monitors watched products and places bids using direct API calls.
- * No Puppeteer needed — uses the api-client module for auth and bidding.
- */
-
 import connectDB from "@/lib/mongoose";
 import WatchedProduct from "@/models/WatchedProduct";
 import logger from "@/lib/logger";
 import { BidderStatus, MonitorStatus } from "./types";
-import {
-  TWENTY_FOUR_HOURS_MS,
-  TEN_MINUTES_MS,
-  POLL_INTERVAL_WAITING_MS,
-  POLL_INTERVAL_EARLY_BID_MS,
-  POLL_INTERVAL_FINAL_BID_MS,
-} from "./constants";
-import {
-  getCurrentPrice,
-  placeBidApi,
-  getAuthToken,
-  getTokenInfo,
-  computeBidAmount,
-  getAuctionLotId,
-} from "./api-client";
-import {
-  logBid,
-  isWinning,
-  finalizeBid,
-} from "./bid-logger";
+import { TWENTY_FOUR_HOURS_MS, TEN_MINUTES_MS } from "./constants";
+import { getLotDetail, placeBidApi, computeBidAmount } from "./api-client";
+import { differenceInMilliseconds, isAfter } from "date-fns";
+import cron, { type ScheduledTask } from "node-cron";
 
-// ─── In-memory state ─────────────────────────────────────────────────────────
+// Single shared cron job — processes all watched products every 10 minutes
+let cronJob: ScheduledTask | null = null;
 
-const stopSignals = new Map<string, boolean>();
-const monitorStatuses = new Map<string, MonitorStatus>();
+// ─── Lot status helpers ────────────────────────────────────────────────────
 
-// ─── DB helpers ──────────────────────────────────────────────────────────────
+// ABC Auctions API: Status 0 = open/live. Adjust if the API uses different values.
+function isLotClosed(status: number): boolean {
+  return status !== 0;
+}
+
+// ─── DB status update ──────────────────────────────────────────────────────
 
 async function updateStatus(
   id: string,
   status: BidderStatus,
-  extra?: Partial<MonitorStatus>
+  extra?: { lastBidAmount?: number; lastBidAt?: string }
 ) {
   await connectDB();
   await WatchedProduct.findByIdAndUpdate(id, {
@@ -48,306 +30,207 @@ async function updateStatus(
     ...(extra?.lastBidAmount != null && { lastBidAmount: extra.lastBidAmount }),
     ...(extra?.lastBidAt != null && { lastBidAt: extra.lastBidAt }),
   });
-  monitorStatuses.set(id, {
-    ...(monitorStatuses.get(id) ?? {}),
-    watchedProductId: id,
-    bidderStatus: status,
-    lastBidAmount: extra?.lastBidAmount ?? null,
-    lastBidAt: extra?.lastBidAt ?? null,
-    ...extra,
-  });
 }
 
-// ─── Credential / token check ────────────────────────────────────────────────
+// ─── Per-product processing ────────────────────────────────────────────────
 
-/**
- * Check if we have a valid auth token for bidding.
- */
-export function hasBidderCredentials(): boolean {
-  return getAuthToken() !== null;
-}
+async function processSingleProduct(watched: InstanceType<typeof WatchedProduct>): Promise<void> {
+  const id = String(watched._id);
 
-/**
- * Check if the auth token has enough time left for bidding.
- * Returns false if the token will expire within 1 hour.
- */
-export function hasValidToken(): boolean {
-  const info = getTokenInfo();
-  return info.hasToken && !info.isExpired && (info.expiresInHours ?? 0) > 1;
-}
-
-// ─── Manual bid (one-shot) ───────────────────────────────────────────────────
-
-/**
- * Place a single manual bid via the API.
- * No browser needed — calls the bid API directly with the stored JWT.
- */
-export async function placeManualBid(
-  productUrl: string,
-  amount: number
-): Promise<boolean> {
-  const result = await placeBidApi(productUrl, amount);
-  if (!result.success) {
-    logger.warn("🌕 Manual bid failed", {
-      productUrl,
-      amount,
-      error: result.error,
-    });
+  const detail = await getLotDetail(watched.productUrl);
+  if (!detail) {
+    logger.warn("🌕 Could not fetch lot detail, skipping", { id });
+    return;
   }
-  return result.success;
-}
 
-// ─── Monitor loop ────────────────────────────────────────────────────────────
+  // Skip closed auctions — mark final outcome based on last bid
+  if (isLotClosed(detail.Status)) {
+    const currentPrice = detail.CurrentBid ?? detail.StartingBid;
+    const status: BidderStatus =
+      watched.lastBidAmount != null && currentPrice != null && currentPrice <= watched.lastBidAmount
+        ? "won"
+        : "outbid";
+    await updateStatus(id, status);
+    logger.info(`🟢 Auction closed — status: ${status}`, { id, currentPrice });
+    return;
+  }
 
-async function monitorLoop(id: string): Promise<void> {
-  logger.info("🟢 Monitor loop started", { id });
+  const now = new Date();
+  const endTime = new Date(watched.auctionEndTime);
 
-  while (true) {
-    if (stopSignals.get(id)) {
-      logger.info("🟢 Stop signal received", { id });
-      await updateStatus(id, "stopped");
-      stopSignals.delete(id);
-      monitorStatuses.delete(id);
-      return;
-    }
+  // Auction already over by time
+  if (isAfter(now, endTime)) {
+    const currentPrice = detail.CurrentBid ?? detail.StartingBid;
+    const status: BidderStatus =
+      watched.lastBidAmount != null && currentPrice != null && currentPrice <= watched.lastBidAmount
+        ? "won"
+        : "outbid";
+    await updateStatus(id, status);
+    logger.info(`🟢 Auction ended — status: ${status}`, { id });
+    return;
+  }
 
-    await connectDB();
-    const watched = await WatchedProduct.findById(id);
-    if (!watched) {
-      logger.warn("🌕 Watched product not found, stopping monitor", { id });
-      return;
-    }
+  const timeLeftMs = differenceInMilliseconds(endTime, now);
 
-    const now = Date.now();
-    const endTime = new Date(watched.auctionEndTime).getTime();
-    const timeLeft = endTime - now;
+  // More than 24 hours left — just wait
+  if (timeLeftMs > TWENTY_FOUR_HOURS_MS) {
+    await updateStatus(id, "waiting");
+    logger.debug("🟣 Waiting for auction window", {
+      id,
+      hoursLeft: Math.round(timeLeftMs / 3_600_000),
+    });
+    return;
+  }
 
-    // Auction already over
-    if (timeLeft <= 0) {
-      const currentPrice = await getCurrentPrice(watched.productUrl);
-      const status: BidderStatus =
-        currentPrice != null &&
-        watched.lastBidAmount != null &&
-        currentPrice <= watched.lastBidAmount
-          ? "won"
-          : "outbid";
-      await updateStatus(id, status);
+  const currentPrice = detail.CurrentBid ?? detail.StartingBid ?? null;
+  if (currentPrice === null) {
+    logger.warn("🌕 No current price available, skipping", { id });
+    return;
+  }
 
-      // Log final result to Bids collection
-      await finalizeBid(id, status === "won" ? "won" : "lost");
+  if (currentPrice >= watched.maxBid) {
+    logger.info("🟢 Price reached maxBid — stopping", { id, currentPrice, maxBid: watched.maxBid });
+    await updateStatus(id, "stopped");
+    return;
+  }
 
-      logger.info(`🟢 Auction ended — status: ${status}`, { id, currentPrice });
-      monitorStatuses.delete(id);
-      return;
-    }
+  const isFinalWindow = timeLeftMs <= TEN_MINUTES_MS;
+  const hasPlacedEarlyBid = watched.lastBidAmount != null;
+  const isOutbid = watched.lastBidAmount != null && currentPrice > watched.lastBidAmount;
 
-    // More than 24 hours left — keep waiting
-    if (timeLeft > TWENTY_FOUR_HOURS_MS) {
-      await updateStatus(id, "waiting");
-      logger.debug("🟣 Waiting for auction window", {
-        id,
-        minutesLeft: Math.round(timeLeft / 60000),
-      });
-      await sleep(POLL_INTERVAL_WAITING_MS);
-      continue;
-    }
+  const shouldPlaceEarlyBid =
+    !isFinalWindow && !hasPlacedEarlyBid && currentPrice >= watched.minBid;
+  const shouldPlaceRecursiveBid =
+    isFinalWindow && currentPrice >= watched.minBid && (!hasPlacedEarlyBid || isOutbid);
 
-    // Within 24 hours — get current price via API
-    const currentPrice = await getCurrentPrice(watched.productUrl);
-
-    if (currentPrice === null) {
-      logger.warn("🌕 Could not read current price, retrying", { id });
-      const pollInterval =
-        timeLeft <= TEN_MINUTES_MS
-          ? POLL_INTERVAL_FINAL_BID_MS
-          : POLL_INTERVAL_EARLY_BID_MS;
-      await sleep(pollInterval);
-      continue;
-    }
-
-    // In the last 10 minutes: check if we're still winning
-    // If not, aggressively bid to regain winning status
-    if (timeLeft <= TEN_MINUTES_MS && watched.lastBidAmount != null) {
-      const stillWinning = await isWinning(id, watched.productUrl);
-      if (!stillWinning) {
-        logger.info("🟡 Outbid in final 10min — preparing counter-bid", {
-          id,
-          ourBid: watched.lastBidAmount,
-          currentPrice,
-        });
-      }
-    }
-
-    if (currentPrice >= watched.maxBid) {
-      logger.info("🟢 Price reached maxBid — stopping", {
+  if (shouldPlaceEarlyBid || shouldPlaceRecursiveBid) {
+    const bidAmount = computeBidAmount(currentPrice, watched.maxBid);
+    if (bidAmount == null) {
+      logger.info("🟢 Next valid bid exceeds maxBid — stopping", {
         id,
         currentPrice,
         maxBid: watched.maxBid,
       });
       await updateStatus(id, "stopped");
-      monitorStatuses.delete(id);
       return;
     }
 
-    // Decision: should we bid?
-    const isFinalWindow = timeLeft <= TEN_MINUTES_MS;
-    const hasPlacedEarlyBid = watched.lastBidAmount != null;
-    const isOutbid =
-      watched.lastBidAmount != null && currentPrice > watched.lastBidAmount;
+    await updateStatus(id, "active");
+    const result = await placeBidApi(watched.externalId, bidAmount);
 
-    const shouldPlaceEarlyBid =
-      !isFinalWindow && !hasPlacedEarlyBid && currentPrice >= watched.minBid;
-    const shouldPlaceRecursiveBid =
-      isFinalWindow &&
-      currentPrice >= watched.minBid &&
-      (!hasPlacedEarlyBid || isOutbid);
-
-    if (shouldPlaceEarlyBid || shouldPlaceRecursiveBid) {
-      // Compute the next valid bid amount using increment tiers
-      const bidAmount = computeBidAmount(currentPrice, watched.maxBid);
-
-      if (bidAmount === null) {
-        logger.info("🟢 Next valid bid exceeds maxBid — stopping", {
-          id,
-          currentPrice,
-          maxBid: watched.maxBid,
-        });
-        await updateStatus(id, "stopped");
-        monitorStatuses.delete(id);
-        return;
-      }
-
-      await updateStatus(id, "active");
-
-      // Check we have a valid token before trying to bid
-      if (!getAuthToken()) {
-        logger.warn(
-          "🌕 No valid auth token — cannot bid. Provide a token via /api/abc-auctions/auth/token",
-          { id }
-        );
-        // Don't stop the monitor — keep polling, maybe the user will add a token
-        await sleep(POLL_INTERVAL_EARLY_BID_MS);
-        continue;
-      }
-
-      const result = await placeBidApi(watched.productUrl, bidAmount);
-      const auctionLotId = await getAuctionLotId(watched.productUrl);
-
-      if (result.success) {
-        const actualAmount = result.bidAmount ?? bidAmount;
-        const bidTime = new Date().toISOString();
-        await updateStatus(id, "active", {
-          lastBidAmount: actualAmount,
-          lastBidAt: bidTime,
-        });
-
-        // Log successful bid
-        if (auctionLotId) {
-          await logBid({
-            watchedProductId: id,
-            lotId: (watched as any).externalId || "",
-            auctionLotId,
-            productUrl: watched.productUrl,
-            productTitle: watched.title,
-            bidAmount: actualAmount,
-            success: true,
-            currentPriceAtBid: currentPrice,
-            maxBid: watched.maxBid,
-            auctionEndTime: new Date(watched.auctionEndTime),
-            apiResponse: result.response,
-          });
-        }
-
-        logger.info("🟢 Bid placed via API", {
-          id,
-          bidAmount: actualAmount,
-          response: result.response,
-        });
-      } else {
-        // Log failed bid
-        if (auctionLotId) {
-          await logBid({
-            watchedProductId: id,
-            lotId: (watched as any).externalId || "",
-            auctionLotId,
-            productUrl: watched.productUrl,
-            productTitle: watched.title,
-            bidAmount,
-            success: false,
-            currentPriceAtBid: currentPrice,
-            maxBid: watched.maxBid,
-            auctionEndTime: new Date(watched.auctionEndTime),
-            error: result.error,
-          });
-        }
-
-        logger.warn("🌕 Bid failed via API — re-fetching price for retry", {
-          id,
-          bidAmount,
-          error: result.error,
-        });
-
-        // Re-fetch the actual current price so the next iteration
-        // computes a correct bid amount (price may have changed).
-        const freshPrice = await getCurrentPrice(watched.productUrl);
-        if (freshPrice !== null && freshPrice !== currentPrice) {
-          logger.info("🔵 Price changed since last check", {
-            id,
-            stalePrice: currentPrice,
-            freshPrice,
-          });
-        }
-
-        // Short sleep then immediately retry with fresh price
-        await sleep(isFinalWindow ? 3_000 : 10_000);
-        continue;
-      }
-    } else {
-      logger.debug("🟣 Bidding conditions not met", {
-        id,
-        currentPrice,
-        minBid: watched.minBid,
-        isFinalWindow,
-        hasPlacedEarlyBid,
-        isOutbid,
+    if (result.success) {
+      await updateStatus(id, "active", {
+        lastBidAmount: result.bidAmount ?? bidAmount,
+        lastBidAt: new Date().toISOString(),
       });
+      logger.info("🟢 Bid placed", { id, bidAmount: result.bidAmount ?? bidAmount });
+    } else {
+      logger.warn("🌕 Bid failed", { id, error: result.error });
     }
-
-    const pollInterval = isFinalWindow
-      ? POLL_INTERVAL_FINAL_BID_MS
-      : POLL_INTERVAL_EARLY_BID_MS;
-    await sleep(pollInterval);
+  } else {
+    logger.debug("🟣 Bidding conditions not met", {
+      id,
+      currentPrice,
+      minBid: watched.minBid,
+      isFinalWindow,
+      hasPlacedEarlyBid,
+      isOutbid,
+    });
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+// ─── Cron tick — processes all active watched products ─────────────────────
 
-// ─── Public exports ──────────────────────────────────────────────────────────
+async function runCronTick(): Promise<void> {
+  logger.info("🔵 Cron tick — checking all watched products");
 
-export function startMonitor(watchedProductId: string): void {
-  if (monitorStatuses.has(watchedProductId)) {
-    logger.warn("🌕 Monitor already running", { watchedProductId });
+  await connectDB();
+
+  // Only process products that are not in a terminal state
+  const activeProducts = await WatchedProduct.find({
+    bidderStatus: { $nin: ["won", "outbid", "stopped"] },
+  });
+
+  if (activeProducts.length === 0) {
+    logger.debug("🟣 No active products to monitor");
     return;
   }
-  stopSignals.set(watchedProductId, false);
-  monitorStatuses.set(watchedProductId, {
-    watchedProductId,
-    bidderStatus: "waiting",
-    lastBidAmount: null,
-    lastBidAt: null,
-  });
-  monitorLoop(watchedProductId).catch((err) => {
-    logger.error("🔴 Monitor loop crashed", { watchedProductId, err });
-    monitorStatuses.delete(watchedProductId);
-  });
+
+  logger.info(`🔵 Processing ${activeProducts.length} watched product(s)`);
+
+  await Promise.allSettled(
+    activeProducts.map((watched) =>
+      processSingleProduct(watched).catch((err) =>
+        logger.error("🔴 Error processing product", { id: String(watched._id), err })
+      )
+    )
+  );
 }
 
+// ─── Public API ────────────────────────────────────────────────────────────
+
+/**
+ * Ensure the shared cron monitor is running.
+ * Safe to call multiple times — subsequent calls are no-ops.
+ */
+function ensureCronRunning(): void {
+  if (cronJob) return;
+
+  // Run every 10 minutes
+  cronJob = cron.schedule("*/10 * * * *", () => {
+    runCronTick().catch((err) => logger.error("🔴 Cron tick failed", { err }));
+  });
+
+  logger.info("🟢 Cron monitor started — running every 10 minutes");
+
+  // Run immediately so the product is picked up without waiting 10 minutes
+  runCronTick().catch((err) => logger.error("🔴 Initial cron tick failed", { err }));
+}
+
+/**
+ * Start monitoring a watched product.
+ * Ensures the cron job is running — the product will be processed on the
+ * next tick (or immediately on the first call).
+ */
+export function startMonitor(watchedProductId: string): void {
+  logger.info("🟢 Start monitor requested", { watchedProductId });
+  ensureCronRunning();
+}
+
+/**
+ * Stop monitoring a specific watched product by marking it as stopped in the DB.
+ * The cron job will skip it on subsequent ticks.
+ */
 export function stopMonitor(watchedProductId: string): void {
-  stopSignals.set(watchedProductId, true);
+  logger.info("🟢 Stop monitor requested", { watchedProductId });
+  updateStatus(watchedProductId, "stopped").catch((err) =>
+    logger.error("🔴 Failed to set stopped status", { watchedProductId, err })
+  );
 }
 
-export function getMonitorStatuses(): MonitorStatus[] {
-  return Array.from(monitorStatuses.values());
+/**
+ * Get the current monitor statuses from the DB (products not in terminal states).
+ */
+export async function getMonitorStatuses(): Promise<MonitorStatus[]> {
+  await connectDB();
+  const products = await WatchedProduct.find({
+    bidderStatus: { $nin: ["won", "outbid", "stopped", "idle"] },
+  }).lean();
+
+  return products.map((p) => ({
+    watchedProductId: String(p._id),
+    bidderStatus: p.bidderStatus,
+    lastBidAmount: p.lastBidAmount ?? null,
+    lastBidAt: p.lastBidAt ? new Date(p.lastBidAt).toISOString() : null,
+  }));
+}
+
+/**
+ * Stop the shared cron job entirely (e.g. for graceful shutdown).
+ */
+export function stopCronMonitor(): void {
+  if (!cronJob) return;
+  cronJob.stop();
+  cronJob = null;
+  logger.info("🟢 Cron monitor stopped");
 }

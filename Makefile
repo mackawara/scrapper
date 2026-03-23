@@ -32,7 +32,7 @@ build-amd: stop
 # ── Run locally ───────────────────────────────────────────────────────────────
 
 run: stop
-	docker run --rm --name scrapper -p 3000:3000 --env-file .env scrapper
+	docker run --rm --name scrapper -p 3000:3000 --env-file .env scrapper:latest
 
 run-it: stop
 	docker run --rm -it scrapper sh

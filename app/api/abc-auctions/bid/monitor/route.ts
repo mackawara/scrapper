@@ -3,10 +3,11 @@ import connectDB from "@/lib/mongoose";
 import WatchedProduct from "@/models/WatchedProduct";
 import { startMonitor, stopMonitor, getMonitorStatuses } from "@/lib/abc-auctions/bidder";
 import logger from "@/lib/logger";
+import { differenceInMilliseconds } from "date-fns";
 import { TWENTY_FOUR_HOURS_MS } from "@/lib/abc-auctions/constants";
 
 export async function GET() {
-  const statuses = getMonitorStatuses();
+  const statuses = await getMonitorStatuses();
   return NextResponse.json({ monitors: statuses });
 }
 
@@ -40,8 +41,8 @@ export async function POST(req: NextRequest) {
 
     startMonitor(watchedProductId);
 
-    const timeLeft = new Date(watched.auctionEndTime).getTime() - Date.now();
-    const bidderStatus = timeLeft > TWENTY_FOUR_HOURS_MS ? "waiting" : "active";
+    const timeLeftMs = differenceInMilliseconds(new Date(watched.auctionEndTime), new Date());
+    const bidderStatus = timeLeftMs > TWENTY_FOUR_HOURS_MS ? "waiting" : "active";
 
     logger.info("🟢 Monitor started", { watchedProductId, bidderStatus });
     return NextResponse.json({ status: "started", bidderStatus });
