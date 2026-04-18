@@ -44,10 +44,22 @@ import {
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Browse", href: "/abc-auctions", icon: <GridViewIcon fontSize="small" /> },
-  { label: "Categories", href: "/abc-auctions/categories", icon: <CategoryIcon fontSize="small" /> },
-  { label: "Watch List", href: "/abc-auctions/watchlist", icon: <VisibilityIcon fontSize="small" /> },
+  {
+    label: "Categories",
+    href: "/abc-auctions/categories",
+    icon: <CategoryIcon fontSize="small" />,
+  },
+  {
+    label: "Watch List",
+    href: "/abc-auctions/watchlist",
+    icon: <VisibilityIcon fontSize="small" />,
+  },
   { label: "Bids", href: "/abc-auctions/bids", icon: <LocalFireDepartmentIcon fontSize="small" /> },
-  { label: "Wish List", href: "/abc-auctions/wishlist", icon: <FavoriteBorderIcon fontSize="small" /> },
+  {
+    label: "Wish List",
+    href: "/abc-auctions/wishlist",
+    icon: <FavoriteBorderIcon fontSize="small" />,
+  },
   { label: "Settings", href: "/abc-auctions/settings", icon: <SettingsIcon fontSize="small" /> },
 ];
 
@@ -259,9 +271,7 @@ export default function WatchlistPage() {
 
   const filteredAndSorted = useMemo(() => {
     const q = search.trim().toLowerCase();
-    let list = q
-      ? watched.filter((w) => w.title.toLowerCase().includes(q))
-      : [...watched];
+    const list = q ? watched.filter((w) => w.title.toLowerCase().includes(q)) : [...watched];
 
     list.sort((a, b) => {
       const priceA = liveProductMap.get(a.externalId)?.currentPrice ?? a.lastBidAmount ?? 0;
@@ -271,15 +281,22 @@ export default function WatchlistPage() {
           return compareAsc(parseISO(a.auctionEndTime), parseISO(b.auctionEndTime));
         case "closingLate":
           return compareDesc(parseISO(a.auctionEndTime), parseISO(b.auctionEndTime));
-        case "priceLow":  return priceA - priceB;
-        case "priceHigh": return priceB - priceA;
-        case "maxBidLow":  return a.maxBid - b.maxBid;
-        case "maxBidHigh": return b.maxBid - a.maxBid;
-        case "nameAZ": return a.title.localeCompare(b.title);
-        case "nameZA": return b.title.localeCompare(a.title);
+        case "priceLow":
+          return priceA - priceB;
+        case "priceHigh":
+          return priceB - priceA;
+        case "maxBidLow":
+          return a.maxBid - b.maxBid;
+        case "maxBidHigh":
+          return b.maxBid - a.maxBid;
+        case "nameAZ":
+          return a.title.localeCompare(b.title);
+        case "nameZA":
+          return b.title.localeCompare(a.title);
         case "recentlyAdded":
           return compareDesc(parseISO(a.createdAt), parseISO(b.createdAt));
-        default: return 0;
+        default:
+          return 0;
       }
     });
 
@@ -302,8 +319,8 @@ export default function WatchlistPage() {
           </Typography>
           {!loading && (
             <Typography variant="body2" color="text.secondary">
-              {filteredAndSorted.length}{search ? ` of ${watched.length}` : ""}{" "}
-              item{watched.length !== 1 ? "s" : ""}
+              {filteredAndSorted.length}
+              {search ? ` of ${watched.length}` : ""} item{watched.length !== 1 ? "s" : ""}
             </Typography>
           )}
         </Stack>
@@ -349,9 +366,7 @@ export default function WatchlistPage() {
         </Box>
       ) : filteredAndSorted.length === 0 ? (
         <Box sx={{ textAlign: "center", py: 8 }}>
-          <Typography color="text.secondary">
-            No items match &quot;{search}&quot;
-          </Typography>
+          <Typography color="text.secondary">No items match &quot;{search}&quot;</Typography>
         </Box>
       ) : (
         <Grid container spacing={2}>

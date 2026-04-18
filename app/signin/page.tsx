@@ -34,20 +34,12 @@ function SignInContent() {
         background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
       }}
     >
-      <Card
-        elevation={8}
-        sx={{ maxWidth: 420, width: "100%", mx: 2, borderRadius: 3 }}
-      >
+      <Card elevation={8} sx={{ maxWidth: 420, width: "100%", mx: 2, borderRadius: 3 }}>
         <CardContent sx={{ p: 5 }}>
           <Typography variant="h4" fontWeight={800} textAlign="center" gutterBottom>
             Scrapper
           </Typography>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            textAlign="center"
-            mb={4}
-          >
+          <Typography variant="body2" color="text.secondary" textAlign="center" mb={4}>
             Sign in to access the auction scraper
           </Typography>
 

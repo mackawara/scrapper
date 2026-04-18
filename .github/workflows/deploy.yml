@@ -5,9 +5,9 @@ on:
     branches: [main]
 
 env:
-  ORACLE_VM_PRIVATE_KEY: ${{ secrets.ORACLE_PRIVATE_KEY }}
+  ORACLE_VM_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
   ORACLE_VM_URL: ${{ secrets.ORACLE_VM_URL }}
-  ORACLE_USERNAME: ${{ secrets.ORACLE_USERNAME }}
+  ORACLE_USERNAME: ${{ secrets.SSH_USER }}
 
 jobs:
   test:
@@ -41,7 +41,7 @@ jobs:
     steps:
       - name: Set permissions for private key
         run: |
-          echo "${{ secrets.ORACLE_PRIVATE_KEY }}" > oracle.key
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > oracle.key
           chmod 600 oracle.key
 
       - name: Pull latest changes and restart PM2

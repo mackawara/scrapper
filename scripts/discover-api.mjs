@@ -56,8 +56,8 @@ const BID_ENDPOINTS = [
   { method: "POST", path: "/api/bid" },
   { method: "POST", path: "/api/bids" },
   { method: "POST", path: "/api/lots/bid" },
-  { method: "GET",  path: "/lots/bid" },
-  { method: "GET",  path: "/bids" },
+  { method: "GET", path: "/lots/bid" },
+  { method: "GET", path: "/bids" },
 ];
 
 const DISCOVERY_ENDPOINTS = [
@@ -83,10 +83,10 @@ async function probe(method, path, body, headers) {
     const res = await fetch(url, {
       method,
       headers: {
-        "Accept": "application/json",
+        Accept: "application/json",
         "Content-Type": "application/json",
-        "Origin": SITE_BASE,
-        "Referer": `${SITE_BASE}/`,
+        Origin: SITE_BASE,
+        Referer: `${SITE_BASE}/`,
         ...(headers ?? {}),
       },
       body: body ? JSON.stringify(body) : undefined,
@@ -94,8 +94,15 @@ async function probe(method, path, body, headers) {
     });
     const text = await res.text();
     const respHeaders = {};
-    res.headers.forEach((v, k) => { respHeaders[k] = v; });
-    return { status: res.status, statusText: res.statusText, headers: respHeaders, body: text.substring(0, 2000) };
+    res.headers.forEach((v, k) => {
+      respHeaders[k] = v;
+    });
+    return {
+      status: res.status,
+      statusText: res.statusText,
+      headers: respHeaders,
+      body: text.substring(0, 2000),
+    };
   } catch (err) {
     return null;
   }
@@ -112,7 +119,8 @@ async function main() {
     if (r && r.status !== 404 && r.status !== 405) {
       console.log(`✅ ${ep.method} ${ep.path} → ${r.status} ${r.statusText}`);
       if (r.body.length > 0 && r.body.length < 500) console.log(`   Body: ${r.body}`);
-      else if (r.body.length >= 500) console.log(`   Body (truncated): ${r.body.substring(0, 300)}...`);
+      else if (r.body.length >= 500)
+        console.log(`   Body (truncated): ${r.body.substring(0, 300)}...`);
     } else {
       console.log(`❌ ${ep.method} ${ep.path} → ${r?.status ?? "timeout"}`);
     }
@@ -139,9 +147,16 @@ async function main() {
         console.log(`   Response: ${r.body}`);
         try {
           const data = JSON.parse(r.body);
-          authToken = data.token ?? data.accessToken ?? data.access_token ??
-                      data.Token ?? data.AccessToken ?? data.jwt ??
-                      data.result?.token ?? data.result?.accessToken ?? data.data?.token;
+          authToken =
+            data.token ??
+            data.accessToken ??
+            data.access_token ??
+            data.Token ??
+            data.AccessToken ??
+            data.jwt ??
+            data.result?.token ??
+            data.result?.accessToken ??
+            data.data?.token;
           if (authToken) console.log(`\n🔑 Token: ${authToken.substring(0, 80)}...`);
         } catch {}
         break;
@@ -154,7 +169,7 @@ async function main() {
 
   // Phase 3: Bid endpoints
   console.log("\n=== BID ENDPOINTS ===\n");
-  const authHeaders = authToken ? { "Authorization": `Bearer ${authToken}` } : {};
+  const authHeaders = authToken ? { Authorization: `Bearer ${authToken}` } : {};
   for (const ep of BID_ENDPOINTS) {
     const r = await probe(ep.method, ep.path, undefined, authHeaders);
     if (r && r.status !== 404) {
@@ -168,23 +183,35 @@ async function main() {
   // Phase 4: Angular bundle analysis
   console.log("\n=== ANGULAR JS BUNDLE ANALYSIS ===\n");
   try {
-    const res = await fetch(SITE_BASE, { signal: AbortSignal.timeout(15000), headers: { "Accept": "text/html" } });
+    const res = await fetch(SITE_BASE, {
+      signal: AbortSignal.timeout(15000),
+      headers: { Accept: "text/html" },
+    });
     const html = await res.text();
     const scriptMatches = html.match(/src="([^"]*\.js)"/g) ?? [];
     console.log(`Found ${scriptMatches.length} JS bundles`);
 
     for (const match of scriptMatches) {
-      const src = match.replace('src="', '').replace('"', '');
-      const fullUrl = src.startsWith("http") ? src : `${SITE_BASE}/${src.replace(/^\//, '')}`;
+      const src = match.replace('src="', "").replace('"', "");
+      const fullUrl = src.startsWith("http") ? src : `${SITE_BASE}/${src.replace(/^\//, "")}`;
       console.log(`\nFetching: ${fullUrl}`);
       try {
         const jsRes = await fetch(fullUrl, { signal: AbortSignal.timeout(15000) });
         const js = await jsRes.text();
         const patterns = [
-          { name: "API paths", re: /["']\/(?:api\/|auth\/|account\/|users\/|bids?\/|lots\/)[a-zA-Z\/\-]*["']/g },
-          { name: "Auth keywords", re: /["'](?:login|signin|authenticate|bid|place.?bid|token)["']/gi },
+          {
+            name: "API paths",
+            re: /["']\/(?:api\/|auth\/|account\/|users\/|bids?\/|lots\/)[a-zA-Z\/\-]*["']/g,
+          },
+          {
+            name: "Auth keywords",
+            re: /["'](?:login|signin|authenticate|bid|place.?bid|token)["']/gi,
+          },
           { name: "Bearer", re: /Authorization["']\s*[:=,]\s*["']Bearer/g },
-          { name: "Token refs", re: /["'](?:access.?[Tt]oken|refresh.?[Tt]oken|auth.?[Tt]oken|[Bb]earer)["']/g },
+          {
+            name: "Token refs",
+            re: /["'](?:access.?[Tt]oken|refresh.?[Tt]oken|auth.?[Tt]oken|[Bb]earer)["']/g,
+          },
         ];
         for (const { name, re } of patterns) {
           const matches = js.match(re);
@@ -193,7 +220,9 @@ async function main() {
             console.log(`  ${name}: ${unique.join(", ")}`);
           }
         }
-      } catch { console.log(`  ⏱️ Could not fetch`); }
+      } catch {
+        console.log(`  ⏱️ Could not fetch`);
+      }
     }
   } catch (err) {
     console.log(`Error: ${err.message}`);

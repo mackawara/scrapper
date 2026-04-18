@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";
 import DialogContent from "@mui/material/DialogContent";
@@ -20,18 +20,23 @@ interface WatchDialogProps {
   loading: boolean;
 }
 
-export default function WatchDialog({ open, product, onClose, onConfirm, loading }: WatchDialogProps) {
+export default function WatchDialog({
+  open,
+  product,
+  onClose,
+  onConfirm,
+  loading,
+}: WatchDialogProps) {
   const [minBid, setMinBid] = useState("0");
   const [maxBid, setMaxBid] = useState("");
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    if (open) {
-      setMinBid("0");
-      setMaxBid("");
-      setError("");
-    }
-  }, [open]);
+  function handleClose() {
+    setMinBid("0");
+    setMaxBid("");
+    setError("");
+    onClose();
+  }
 
   function validate() {
     const min = parseFloat(minBid);
@@ -44,13 +49,16 @@ export default function WatchDialog({ open, product, onClose, onConfirm, loading
 
   async function handleConfirm() {
     const err = validate();
-    if (err) { setError(err); return; }
+    if (err) {
+      setError(err);
+      return;
+    }
     setError("");
     await onConfirm(parseFloat(minBid), parseFloat(maxBid));
   }
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
+    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="xs">
       <DialogTitle sx={{ pb: 1 }}>
         Watch Product
         {product && (
@@ -64,7 +72,9 @@ export default function WatchDialog({ open, product, onClose, onConfirm, loading
         <Stack spacing={2} pt={1}>
           {product && (
             <Stack direction="row" justifyContent="space-between">
-              <Typography variant="body2" color="text.secondary">Current price</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Current price
+              </Typography>
               <Typography variant="body2" fontWeight={600}>
                 ${product.currentPrice.toLocaleString()}
               </Typography>
@@ -103,7 +113,7 @@ export default function WatchDialog({ open, product, onClose, onConfirm, loading
       </DialogContent>
 
       <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onClose} disabled={loading} color="inherit">
+        <Button onClick={handleClose} disabled={loading} color="inherit">
           Cancel
         </Button>
         <Button

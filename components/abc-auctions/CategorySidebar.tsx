@@ -38,18 +38,16 @@ export default function CategorySidebar({ categories, selected, onChange }: Cate
       <Divider sx={{ mb: 1 }} />
       <List dense disablePadding>
         <ListItemButton selected={allSelected} onClick={() => onChange([])}>
-          <Checkbox
-            edge="start"
-            checked={allSelected}
-            disableRipple
-            size="small"
-            color="primary"
-          />
+          <Checkbox edge="start" checked={allSelected} disableRipple size="small" color="primary" />
           <ListItemText primary="All" />
         </ListItemButton>
 
         {categories.map(({ name, count }) => (
-          <ListItemButton key={name} selected={selected.includes(name)} onClick={() => toggle(name)}>
+          <ListItemButton
+            key={name}
+            selected={selected.includes(name)}
+            onClick={() => toggle(name)}
+          >
             <Checkbox
               edge="start"
               checked={selected.includes(name)}

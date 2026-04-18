@@ -34,11 +34,7 @@ export default function UserMenu() {
     <>
       <Tooltip title={name ?? email ?? "Account"}>
         <IconButton onClick={(e) => setAnchorEl(e.currentTarget)} size="small">
-          <Avatar
-            src={image ?? undefined}
-            alt={name ?? "User"}
-            sx={{ width: 30, height: 30 }}
-          />
+          <Avatar src={image ?? undefined} alt={name ?? "User"} sx={{ width: 30, height: 30 }} />
         </IconButton>
       </Tooltip>
       <Menu
@@ -64,9 +60,7 @@ export default function UserMenu() {
           />
         </MenuItem>
         <Divider />
-        <MenuItem
-          onClick={() => signOut({ callbackUrl: "/signin" })}
-        >
+        <MenuItem onClick={() => signOut({ callbackUrl: "/signin" })}>
           <ListItemIcon>
             <LogoutIcon fontSize="small" />
           </ListItemIcon>

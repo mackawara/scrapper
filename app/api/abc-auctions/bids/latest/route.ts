@@ -25,7 +25,9 @@ export async function GET(req: NextRequest) {
     await connectDB();
 
     // Get all watched products
-    const watched = await WatchedProduct.find({ /* all */ }).lean();
+    const watched = await WatchedProduct.find({
+      /* all */
+    }).lean();
 
     // For each watched product, get the latest bid
     const bidStatusMap = new Map<string, BidStatusInfo>();
@@ -54,9 +56,6 @@ export async function GET(req: NextRequest) {
     });
   } catch (err) {
     logger.error("🔴 GET /api/abc-auctions/bids/latest failed", { err });
-    return NextResponse.json(
-      { error: "Failed to fetch latest bid statuses" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to fetch latest bid statuses" }, { status: 500 });
   }
 }

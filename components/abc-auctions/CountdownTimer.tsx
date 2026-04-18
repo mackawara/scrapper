@@ -65,11 +65,7 @@ export default function CountdownTimer({
       : `${timeLeft.h}h ${timeLeft.m}m ${timeLeft.s}s`;
 
   return (
-    <Typography
-      variant="caption"
-      fontWeight={600}
-      color={isUrgent ? "error" : "text.secondary"}
-    >
+    <Typography variant="caption" fontWeight={600} color={isUrgent ? "error" : "text.secondary"}>
       {isUrgent && "⚡ "}
       {formattedTimeLeft}
     </Typography>

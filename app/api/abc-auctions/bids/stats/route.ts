@@ -15,10 +15,7 @@ export async function GET(req: NextRequest) {
     const watchedProductId = searchParams.get("watchedProductId");
 
     if (!watchedProductId) {
-      return NextResponse.json(
-        { error: "watchedProductId is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "watchedProductId is required" }, { status: 400 });
     }
 
     const [winning, losing, overMax, failed, total] = await Promise.all([
@@ -29,9 +26,7 @@ export async function GET(req: NextRequest) {
       Bid.countDocuments({ watchedProductId }),
     ]);
 
-    const latestBid = await Bid.findOne({ watchedProductId })
-      .sort({ createdAt: -1 })
-      .lean();
+    const latestBid = await Bid.findOne({ watchedProductId }).sort({ createdAt: -1 }).lean();
 
     return NextResponse.json({
       stats: {
@@ -50,9 +45,6 @@ export async function GET(req: NextRequest) {
     });
   } catch (err) {
     logger.error("🔴 GET /api/abc-auctions/bids/stats failed", { err });
-    return NextResponse.json(
-      { error: "Failed to fetch stats" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to fetch stats" }, { status: 500 });
   }
 }

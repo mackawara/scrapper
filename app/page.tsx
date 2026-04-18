@@ -56,7 +56,14 @@ export default function HomePage() {
             >
               <CardActionArea component={Link} href={project.href}>
                 <CardContent sx={{ p: 3 }}>
-                  <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 2 }}>
+                  <Box
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      mb: 2,
+                    }}
+                  >
                     {project.icon}
                     <Chip label={project.tag} size="small" color="success" />
                   </Box>

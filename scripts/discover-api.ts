@@ -67,8 +67,8 @@ const BID_ENDPOINTS = [
   { method: "POST", path: "/api/bid" },
   { method: "POST", path: "/api/bids" },
   { method: "POST", path: "/api/lots/bid" },
-  { method: "GET",  path: "/lots/bid" },
-  { method: "GET",  path: "/bids" },
+  { method: "GET", path: "/lots/bid" },
+  { method: "GET", path: "/bids" },
 ];
 
 // Generic endpoint discovery
@@ -89,7 +89,12 @@ const DISCOVERY_ENDPOINTS = [
   { method: "GET", path: "/account" },
 ];
 
-async function probe(method: string, path: string, body?: object, headers?: Record<string, string>): Promise<{
+async function probe(
+  method: string,
+  path: string,
+  body?: object,
+  headers?: Record<string, string>
+): Promise<{
   status: number;
   statusText: string;
   headers: Record<string, string>;
@@ -100,10 +105,10 @@ async function probe(method: string, path: string, body?: object, headers?: Reco
     const res = await fetch(url, {
       method,
       headers: {
-        "Accept": "application/json",
+        Accept: "application/json",
         "Content-Type": "application/json",
-        "Origin": SITE_BASE,
-        "Referer": `${SITE_BASE}/`,
+        Origin: SITE_BASE,
+        Referer: `${SITE_BASE}/`,
         ...(headers ?? {}),
       },
       body: body ? JSON.stringify(body) : undefined,
@@ -112,7 +117,9 @@ async function probe(method: string, path: string, body?: object, headers?: Reco
 
     const text = await res.text();
     const respHeaders: Record<string, string> = {};
-    res.headers.forEach((v, k) => { respHeaders[k] = v; });
+    res.headers.forEach((v, k) => {
+      respHeaders[k] = v;
+    });
 
     return {
       status: res.status,
@@ -206,7 +213,7 @@ async function fetchAngularRoutes() {
     // Fetch the main page to find JS bundles
     const res = await fetch(SITE_BASE, {
       signal: AbortSignal.timeout(15_000),
-      headers: { "Accept": "text/html" },
+      headers: { Accept: "text/html" },
     });
     const html = await res.text();
 
@@ -215,8 +222,8 @@ async function fetchAngularRoutes() {
     console.log(`Found ${scriptMatches.length} JS bundles`);
 
     for (const match of scriptMatches) {
-      const src = match.replace('src="', '').replace('"', '');
-      const fullUrl = src.startsWith("http") ? src : `${SITE_BASE}/${src.replace(/^\//, '')}`;
+      const src = match.replace('src="', "").replace('"', "");
+      const fullUrl = src.startsWith("http") ? src : `${SITE_BASE}/${src.replace(/^\//, "")}`;
       console.log(`\nFetching: ${fullUrl}`);
 
       try {
@@ -267,9 +274,17 @@ async function main() {
   if (authResult?.response?.body) {
     try {
       const data = JSON.parse(authResult.response.body);
-      token = data.token ?? data.accessToken ?? data.access_token ??
-              data.Token ?? data.AccessToken ?? data.jwt ?? data.JWT ??
-              data.result?.token ?? data.result?.accessToken ?? data.data?.token;
+      token =
+        data.token ??
+        data.accessToken ??
+        data.access_token ??
+        data.Token ??
+        data.AccessToken ??
+        data.jwt ??
+        data.JWT ??
+        data.result?.token ??
+        data.result?.accessToken ??
+        data.data?.token;
       if (token) {
         console.log(`\n🔑 Extracted token: ${token.substring(0, 50)}...`);
       }

@@ -96,7 +96,10 @@ export default function ProjectShell({
                 }}
               >
                 <ListItemIcon sx={{ minWidth: 36 }}>{item.icon}</ListItemIcon>
-                <ListItemText primary={item.label} primaryTypographyProps={{ variant: "body2", fontWeight: active ? 600 : 400 }} />
+                <ListItemText
+                  primary={item.label}
+                  primaryTypographyProps={{ variant: "body2", fontWeight: active ? 600 : 400 }}
+                />
               </ListItemButton>
             );
           })}
@@ -139,7 +142,13 @@ export default function ProjectShell({
                     py: 0.5,
                   }}
                 >
-                  <SearchIcon sx={{ color: searchError ? "error.main" : "text.disabled", mr: 1, fontSize: 20 }} />
+                  <SearchIcon
+                    sx={{
+                      color: searchError ? "error.main" : "text.disabled",
+                      mr: 1,
+                      fontSize: 20,
+                    }}
+                  />
                   <InputBase
                     placeholder={searchPlaceholder}
                     value={search}

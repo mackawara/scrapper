@@ -88,8 +88,13 @@ export async function scrapeCampaigns(): Promise<Campaign[]> {
             // Walk up and grab heading text
             let el: HTMLElement | null = a.parentElement;
             for (let i = 0; i < 8 && el; i++, el = el.parentElement) {
-              const h = el.querySelector<HTMLElement>("h1,h2,h3,h4,h5,h6,[class*='title'],[class*='name']");
-              if (h?.innerText?.trim()) { campaignName = h.innerText.trim(); break; }
+              const h = el.querySelector<HTMLElement>(
+                "h1,h2,h3,h4,h5,h6,[class*='title'],[class*='name']"
+              );
+              if (h?.innerText?.trim()) {
+                campaignName = h.innerText.trim();
+                break;
+              }
             }
           }
           if (!campaignName) campaignName = a.innerText.trim() || "Campaign";
@@ -109,7 +114,9 @@ export async function scrapeCampaigns(): Promise<Campaign[]> {
           let campaignName = "";
           let el: HTMLElement | null = a.parentElement;
           for (let i = 0; i < 8 && el; i++, el = el.parentElement) {
-            const h = el.querySelector<HTMLElement>("h1,h2,h3,h4,h5,h6,[class*='title'],[class*='name'],[class*='heading']");
+            const h = el.querySelector<HTMLElement>(
+              "h1,h2,h3,h4,h5,h6,[class*='title'],[class*='name'],[class*='heading']"
+            );
             if (h?.innerText?.trim() && h.innerText.trim().toLowerCase() !== text) {
               campaignName = h.innerText.trim();
               break;
@@ -220,7 +227,8 @@ export async function scrapeLotsForCampaign(
 
 function looksLikeSearchOrLotEndpoint(url: string): boolean {
   // Algolia
-  if (url.includes("algolia.net") || url.includes("algolianet.com") || url.includes("algolia.io")) return true;
+  if (url.includes("algolia.net") || url.includes("algolianet.com") || url.includes("algolia.io"))
+    return true;
   // Any XHR that looks like a search or lot listing API
   return (
     url.includes("/search") ||
@@ -322,7 +330,9 @@ async function domScrapeLots(page: Page, campaignName: string): Promise<AuctionP
             currentPrice: parsePrice(priceEl?.innerText),
             maxPrice: 0,
             auctionEndTime:
-              timeEl?.getAttribute("datetime") ?? timeEl?.innerText?.trim() ?? new Date().toISOString(),
+              timeEl?.getAttribute("datetime") ??
+              timeEl?.innerText?.trim() ??
+              new Date().toISOString(),
             lotNumber: lotEl?.innerText?.trim() ?? "",
             category: campaign,
             productUrl: link?.href ?? base,
@@ -338,55 +348,105 @@ async function domScrapeLots(page: Page, campaignName: string): Promise<AuctionP
 
 // ─── Mapper ───────────────────────────────────────────────────────────────────
 
-function mapToProduct(raw: Record<string, unknown>, campaignName: string): AuctionProductData | null {
+function mapToProduct(
+  raw: Record<string, unknown>,
+  campaignName: string
+): AuctionProductData | null {
   try {
-    const parsePrice = (val: unknown) =>
-      parseFloat(String(val ?? 0).replace(/[^0-9.]/g, "")) || 0;
+    const parsePrice = (val: unknown) => parseFloat(String(val ?? 0).replace(/[^0-9.]/g, "")) || 0;
 
     const externalId = String(
-      raw.id ?? raw.objectID ?? raw.lotId ?? raw.lot_id ??
-      raw.productId ?? raw.product_id ?? raw.itemId ?? raw.item_id ?? ""
+      raw.id ??
+        raw.objectID ??
+        raw.lotId ??
+        raw.lot_id ??
+        raw.productId ??
+        raw.product_id ??
+        raw.itemId ??
+        raw.item_id ??
+        ""
     );
     if (!externalId) return null;
 
     const title = String(
-      raw.title ?? raw.name ?? raw.lot_title ?? raw.lotTitle ??
-      raw.description ?? raw.item_name ?? raw.itemName ?? ""
+      raw.title ??
+        raw.name ??
+        raw.lot_title ??
+        raw.lotTitle ??
+        raw.description ??
+        raw.item_name ??
+        raw.itemName ??
+        ""
     );
     if (!title) return null;
 
     const imageVal =
-      raw.imageUrl ?? raw.image_url ?? raw.image ?? raw.thumbnail ??
-      raw.photo ?? raw.photo_url ?? raw.photoUrl ??
-      (Array.isArray(raw.images) ? raw.images[0] : undefined) ?? "";
+      raw.imageUrl ??
+      raw.image_url ??
+      raw.image ??
+      raw.thumbnail ??
+      raw.photo ??
+      raw.photo_url ??
+      raw.photoUrl ??
+      (Array.isArray(raw.images) ? raw.images[0] : undefined) ??
+      "";
 
     return {
       externalId,
       title,
       imageUrl: String(imageVal),
       currentPrice: parsePrice(
-        raw.currentPrice ?? raw.current_price ?? raw.currentBid ?? raw.current_bid ??
-        raw.bidAmount ?? raw.bid_amount ?? raw.price ?? raw.amount
+        raw.currentPrice ??
+          raw.current_price ??
+          raw.currentBid ??
+          raw.current_bid ??
+          raw.bidAmount ??
+          raw.bid_amount ??
+          raw.price ??
+          raw.amount
       ),
       maxPrice: parsePrice(
-        raw.maxPrice ?? raw.max_price ?? raw.estimate ?? raw.estimatedValue ??
-        raw.reserve ?? raw.reservePrice ?? raw.reserve_price ??
-        raw.highEstimate ?? raw.high_estimate
+        raw.maxPrice ??
+          raw.max_price ??
+          raw.estimate ??
+          raw.estimatedValue ??
+          raw.reserve ??
+          raw.reservePrice ??
+          raw.reserve_price ??
+          raw.highEstimate ??
+          raw.high_estimate
       ),
       auctionEndTime: String(
-        raw.auctionEndTime ?? raw.closing_time ?? raw.end_time ?? raw.closingDate ??
-        raw.closeTime ?? raw.close_time ?? raw.endDate ?? raw.end_date ?? new Date().toISOString()
+        raw.auctionEndTime ??
+          raw.closing_time ??
+          raw.end_time ??
+          raw.closingDate ??
+          raw.closeTime ??
+          raw.close_time ??
+          raw.endDate ??
+          raw.end_date ??
+          new Date().toISOString()
       ),
       lotNumber: String(
         raw.lotNumber ?? raw.lot_number ?? raw.lot ?? raw.lot_no ?? raw.lotNo ?? ""
       ),
       category: String(
-        raw.category ?? raw.categoryName ?? raw.category_name ??
-        raw.type ?? raw.itemType ?? raw.item_type ?? campaignName
+        raw.category ??
+          raw.categoryName ??
+          raw.category_name ??
+          raw.type ??
+          raw.itemType ??
+          raw.item_type ??
+          campaignName
       ),
       productUrl: String(
-        raw.productUrl ?? raw.product_url ?? raw.url ?? raw.link ??
-        raw.itemUrl ?? raw.item_url ?? `${BASE_URL}/lots/${externalId}`
+        raw.productUrl ??
+          raw.product_url ??
+          raw.url ??
+          raw.link ??
+          raw.itemUrl ??
+          raw.item_url ??
+          `${BASE_URL}/lots/${externalId}`
       ),
       scrapedAt: new Date().toISOString(),
     };

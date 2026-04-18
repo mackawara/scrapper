@@ -32,10 +32,22 @@ import { AuctionProductData, BidStatusData, WatchedProductData } from "@/lib/abc
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Browse", href: "/abc-auctions", icon: <GridViewIcon fontSize="small" /> },
-  { label: "Categories", href: "/abc-auctions/categories", icon: <CategoryIcon fontSize="small" /> },
-  { label: "Watch List", href: "/abc-auctions/watchlist", icon: <VisibilityIcon fontSize="small" /> },
+  {
+    label: "Categories",
+    href: "/abc-auctions/categories",
+    icon: <CategoryIcon fontSize="small" />,
+  },
+  {
+    label: "Watch List",
+    href: "/abc-auctions/watchlist",
+    icon: <VisibilityIcon fontSize="small" />,
+  },
   { label: "Bids", href: "/abc-auctions/bids", icon: <LocalFireDepartmentIcon fontSize="small" /> },
-  { label: "Wish List", href: "/abc-auctions/wishlist", icon: <FavoriteBorderIcon fontSize="small" /> },
+  {
+    label: "Wish List",
+    href: "/abc-auctions/wishlist",
+    icon: <FavoriteBorderIcon fontSize="small" />,
+  },
   { label: "Settings", href: "/abc-auctions/settings", icon: <SettingsIcon fontSize="small" /> },
 ];
 

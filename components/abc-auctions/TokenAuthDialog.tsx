@@ -214,10 +214,12 @@ export default function TokenAuthDialog({
           {!fetching && tokenInfo?.hasToken && (
             <Box>
               <Typography variant="body2" color="text.secondary">
-                Expires: {tokenInfo.expiresAt ? new Date(tokenInfo.expiresAt).toLocaleString() : "—"}
+                Expires:{" "}
+                {tokenInfo.expiresAt ? new Date(tokenInfo.expiresAt).toLocaleString() : "—"}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Time remaining: {tokenInfo.expiresInHours ? `${tokenInfo.expiresInHours.toFixed(1)} hours` : "—"}
+                Time remaining:{" "}
+                {tokenInfo.expiresInHours ? `${tokenInfo.expiresInHours.toFixed(1)} hours` : "—"}
               </Typography>
             </Box>
           )}
@@ -253,7 +255,8 @@ export default function TokenAuthDialog({
           }}
         />
         <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-          Your token is stored securely and used only for authentication with ABC Auctions. It will not be transmitted to any external services.
+          Your token is stored securely and used only for authentication with ABC Auctions. It will
+          not be transmitted to any external services.
         </Typography>
       </Box>
 
@@ -283,12 +286,7 @@ export default function TokenAuthDialog({
 
         {tokenInfo?.hasToken && !tokenInfo.isExpired && (
           <Stack direction="row" spacing={2} mt={3}>
-            <Button
-              variant="contained"
-              disabled={loading}
-              onClick={handleClearToken}
-              color="error"
-            >
+            <Button variant="contained" disabled={loading} onClick={handleClearToken} color="error">
               {loading ? <CircularProgress size={20} /> : "Clear Token"}
             </Button>
           </Stack>
@@ -316,11 +314,7 @@ export default function TokenAuthDialog({
       <DialogContent sx={{ pt: 2 }}>{content}</DialogContent>
       <DialogActions>
         {tokenInfo?.hasToken && !tokenInfo.isExpired && (
-          <Button
-            color="error"
-            onClick={handleClearToken}
-            disabled={loading}
-          >
+          <Button color="error" onClick={handleClearToken} disabled={loading}>
             Clear Token
           </Button>
         )}
@@ -328,11 +322,7 @@ export default function TokenAuthDialog({
           Close
         </Button>
         {(!tokenInfo?.hasToken || tokenInfo?.isExpired) && (
-          <Button
-            variant="contained"
-            onClick={handleSaveToken}
-            disabled={!token.trim() || loading}
-          >
+          <Button variant="contained" onClick={handleSaveToken} disabled={!token.trim() || loading}>
             {loading ? <CircularProgress size={20} /> : "Save Token"}
           </Button>
         )}

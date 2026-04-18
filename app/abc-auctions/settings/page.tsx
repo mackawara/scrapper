@@ -42,12 +42,7 @@ const NAV_ITEMS: NavItem[] = [
 
 export default function SettingsPage() {
   return (
-    <ProjectShell
-      title="ABC Auctions"
-      navItems={NAV_ITEMS}
-      search=""
-      onSearch={() => {}}
-    >
+    <ProjectShell title="ABC Auctions" navItems={NAV_ITEMS} search="" onSearch={() => {}}>
       <Stack spacing={4}>
         <Stack direction="row" alignItems="center" spacing={1.5}>
           <SettingsIcon color="primary" />

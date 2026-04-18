@@ -75,10 +75,7 @@ export async function logBid(params: LogBidParams): Promise<void> {
  * A bid is "winning" if currentPrice <= lastBidAmount.
  * Returns true if winning, false if outbid.
  */
-export async function isWinning(
-  watchedProductId: string,
-  productUrl: string
-): Promise<boolean> {
+export async function isWinning(watchedProductId: string, productUrl: string): Promise<boolean> {
   await connectDB();
 
   try {

@@ -20,17 +20,11 @@ export async function GET(req: NextRequest) {
     if (watchedProductId) query.watchedProductId = watchedProductId;
     if (status) query.status = status;
 
-    const bids = await Bid.find(query)
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean();
+    const bids = await Bid.find(query).sort({ createdAt: -1 }).limit(limit).lean();
 
     return NextResponse.json({ bids, total: bids.length });
   } catch (err) {
     logger.error("🔴 GET /api/abc-auctions/bids failed", { err });
-    return NextResponse.json(
-      { error: "Failed to fetch bids" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to fetch bids" }, { status: 500 });
   }
 }

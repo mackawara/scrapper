@@ -25,9 +25,21 @@ interface CategoryItem {
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Browse", href: "/abc-auctions", icon: <GridViewIcon fontSize="small" /> },
-  { label: "Categories", href: "/abc-auctions/categories", icon: <CategoryIcon fontSize="small" /> },
-  { label: "Watch List", href: "/abc-auctions/watchlist", icon: <VisibilityIcon fontSize="small" /> },
-  { label: "Wish List", href: "/abc-auctions/wishlist", icon: <FavoriteBorderIcon fontSize="small" /> },
+  {
+    label: "Categories",
+    href: "/abc-auctions/categories",
+    icon: <CategoryIcon fontSize="small" />,
+  },
+  {
+    label: "Watch List",
+    href: "/abc-auctions/watchlist",
+    icon: <VisibilityIcon fontSize="small" />,
+  },
+  {
+    label: "Wish List",
+    href: "/abc-auctions/wishlist",
+    icon: <FavoriteBorderIcon fontSize="small" />,
+  },
 ];
 
 export default function CategoriesPage() {

@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import logger from "@/lib/logger";
-import {
-  setAuthToken,
-  getTokenInfo,
-  clearAuthToken,
-} from "@/lib/abc-auctions/api-client";
+import { setAuthToken, getTokenInfo, clearAuthToken } from "@/lib/abc-auctions/api-client";
 
 /**
  * GET /api/abc-auctions/auth/token
@@ -31,10 +27,7 @@ export async function POST(req: NextRequest) {
     const { token } = body;
 
     if (!token || typeof token !== "string") {
-      return NextResponse.json(
-        { error: "token is required (string)" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "token is required (string)" }, { status: 400 });
     }
 
     // Strip "Bearer " prefix if included
@@ -43,10 +36,7 @@ export async function POST(req: NextRequest) {
     const result = setAuthToken(cleanToken);
 
     if (!result) {
-      return NextResponse.json(
-        { error: "Invalid or expired JWT token" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid or expired JWT token" }, { status: 400 });
     }
 
     logger.info("🟢 Auth token stored via API", {
@@ -60,10 +50,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     logger.error("🔴 POST /api/abc-auctions/auth/token failed", { err });
-    return NextResponse.json(
-      { error: "Failed to store token" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to store token" }, { status: 500 });
   }
 }
 

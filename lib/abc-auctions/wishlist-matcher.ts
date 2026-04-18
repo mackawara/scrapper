@@ -22,9 +22,7 @@ export function buildLooseRegexFromQuery(query: string): string {
     return buildFuzzyTokenPattern(tokens[0]);
   }
 
-  const lookaheads = tokens
-    .map((token) => `(?=.*${buildFuzzyTokenPattern(token)})`)
-    .join("");
+  const lookaheads = tokens.map((token) => `(?=.*${buildFuzzyTokenPattern(token)})`).join("");
   return `${lookaheads}.*`;
 }
 
