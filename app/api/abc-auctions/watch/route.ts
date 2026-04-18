@@ -19,9 +19,13 @@ export async function POST(req: NextRequest) {
     await connectDB();
     const body = await req.json();
     const { externalId, productUrl, title, imageUrl, auctionEndTime, minBid = 0, maxBid } = body;
+    const normalizedExternalId = String(externalId ?? "").trim();
 
-    if (!externalId || !productUrl || !title || !auctionEndTime || maxBid == null) {
+    if (!normalizedExternalId || !productUrl || !title || !auctionEndTime || maxBid == null) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    }
+    if (!/^\d+$/.test(normalizedExternalId)) {
+      return NextResponse.json({ error: "externalId must be a numeric bid id" }, { status: 400 });
     }
     if (maxBid <= 0) {
       return NextResponse.json({ error: "maxBid must be greater than 0" }, { status: 400 });
@@ -30,13 +34,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "maxBid must be >= minBid" }, { status: 400 });
     }
 
-    const existing = await WatchedProduct.findOne({ externalId });
+    const existing = await WatchedProduct.findOne({ externalId: normalizedExternalId });
     if (existing) {
       return NextResponse.json({ error: "Product already being watched" }, { status: 409 });
     }
 
     const watched = await WatchedProduct.create({
-      externalId,
+      externalId: normalizedExternalId,
       productUrl,
       title,
       imageUrl: imageUrl ?? "",
@@ -46,7 +50,7 @@ export async function POST(req: NextRequest) {
       bidderStatus: "idle",
     });
 
-    logger.info("🟢 Added to watch list", { externalId, title });
+    logger.info("🟢 Added to watch list", { externalId: normalizedExternalId, title });
     return NextResponse.json({ watched }, { status: 201 });
   } catch (err) {
     logger.error("🔴 POST /api/abc-auctions/watch failed", { err });

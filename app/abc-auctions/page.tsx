@@ -303,13 +303,13 @@ export default function AbcAuctionsPage() {
   async function handleBid(product: AuctionProductData) {
     setBidLoadingExternalId(product.externalId);
     try {
-      const res = await fetch("/api/abc-auctions/bid/place", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          externalId: product.externalId,
-          currentPrice: product.currentPrice,
-        }),
+      const suggestedAmount = Math.floor(Number(product.currentPrice) || 0) + 1;
+      const params = new URLSearchParams({
+        id: product.externalId,
+        amount: String(suggestedAmount),
+      });
+      const res = await fetch(`/api/abc-auctions/bids/place?${params.toString()}`, {
+        method: "GET",
       });
 
       const data = await res.json();

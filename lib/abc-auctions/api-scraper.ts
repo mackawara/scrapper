@@ -67,7 +67,8 @@ function isOpenLot(lot: ApiLot): boolean {
 
 function mapLot(lot: ApiLot, campaignName: string): AuctionProductData {
   return {
-    externalId: String(lot.Id),
+    // The bid placement endpoint expects AuctionLotId (not the lot page Id)
+    externalId: String(lot.AuctionLotId),
     title: lot.Title,
     imageUrl: lot.Photo ?? "",
     currentPrice: lot.CurrentBid ?? lot.StartingBid ?? 0,

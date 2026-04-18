@@ -11,10 +11,8 @@
 
 import logger from "@/lib/logger";
 
-const API_BASE =
-  process.env.ABC_AUCTIONS_API_URL ?? "https://app-api.abcauctions.co.zw";
-const SITE_BASE =
-  process.env.ABC_AUCTIONS_BASE_URL ?? "https://app.abcauctions.co.zw";
+const API_BASE = process.env.ABC_AUCTIONS_API_URL ?? "https://app-api.abcauctions.co.zw";
+const SITE_BASE = process.env.ABC_AUCTIONS_BASE_URL ?? "https://app.abcauctions.co.zw";
 
 // ─── Shared request headers ────────────────────────────────────────────────
 
@@ -85,7 +83,7 @@ export function setAuthToken(token: string): {
     sid: Number(payload.sid ?? 0),
   };
 
-  const expiresInHours = Math.round((expiresAt - now) / 3600000 * 10) / 10;
+  const expiresInHours = Math.round(((expiresAt - now) / 3600000) * 10) / 10;
   logger.info("🟢 Auth token stored", {
     sub: currentToken.sub,
     sid: currentToken.sid,
@@ -245,18 +243,29 @@ interface LotDetailResponse {
   Type: number;
 }
 
+interface SearchLotResult {
+  Id: number;
+  AuctionLotId: number;
+  LotNumber: number | string | null;
+  Type: number;
+  Title?: string;
+}
+
+interface LotSearchResponse {
+  List: SearchLotResult[];
+}
+
 /**
  * Cache for AuctionLotId mapping (lot URL id → AuctionLotId).
  * This never changes for a given lot, so we cache it indefinitely.
  */
 const auctionLotIdCache = new Map<string, number>();
+const bidIdLookupCache = new Map<string, string>();
 
 /**
  * Extract lot ID and type from a product URL.
  */
-export function parseLotUrl(
-  productUrl: string
-): { id: string; type: string } | null {
+export function parseLotUrl(productUrl: string): { id: string; type: string } | null {
   const lotMatch = productUrl.match(/\/lot\/(\d+)\/(\d+)/);
   if (lotMatch) return { type: lotMatch[1], id: lotMatch[2] };
 
@@ -275,9 +284,7 @@ export function parseLotUrl(
  * Always fetches fresh data — prices change frequently during active bidding.
  * Caches the AuctionLotId mapping separately (it never changes).
  */
-export async function getLotDetail(
-  productUrl: string
-): Promise<LotDetailResponse | null> {
+export async function getLotDetail(productUrl: string): Promise<LotDetailResponse | null> {
   const parsed = parseLotUrl(productUrl);
   if (!parsed) {
     logger.warn("🌕 Cannot parse lot URL", { productUrl });
@@ -287,7 +294,7 @@ export async function getLotDetail(
   try {
     const url = `${API_BASE}/lots/detail?id=${parsed.id}&type=${parsed.type}`;
     const res = await fetch(url, {
-      headers: { Accept: "application/json" },
+      headers: BASE_HEADERS,
       signal: AbortSignal.timeout(15_000),
     });
 
@@ -323,9 +330,7 @@ export async function getLotDetail(
  * Uses an in-memory cache (the mapping never changes for a lot).
  * Falls back to fetching the lot detail if not cached.
  */
-export async function getAuctionLotId(
-  productUrl: string
-): Promise<number | null> {
+export async function getAuctionLotId(productUrl: string): Promise<number | null> {
   const parsed = parseLotUrl(productUrl);
   if (!parsed) return null;
 
@@ -341,12 +346,71 @@ export async function getAuctionLotId(
  * Get current bid price via the REST API.
  * Always fetches fresh — never returns stale cached prices.
  */
-export async function getCurrentPrice(
-  productUrl: string
-): Promise<number | null> {
+export async function getCurrentPrice(productUrl: string): Promise<number | null> {
   const detail = await getLotDetail(productUrl);
   if (!detail) return null;
   return detail.CurrentBid ?? detail.StartingBid ?? null;
+}
+
+async function resolveAuctionLotIdFromSearch(identifier: string): Promise<string | null> {
+  if (!/^\d+$/.test(identifier)) return null;
+
+  const cached = bidIdLookupCache.get(identifier);
+  if (cached) return cached;
+
+  try {
+    const params = new URLSearchParams({
+      Size: "50",
+      Sort: "2",
+      Query: identifier,
+    });
+
+    const res = await fetch(`${API_BASE}/lots/search?${params.toString()}`, {
+      headers: BASE_HEADERS,
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!res.ok) return null;
+
+    const data = (await res.json()) as Partial<LotSearchResponse>;
+    const list = Array.isArray(data.List) ? data.List : [];
+    if (list.length === 0) return null;
+
+    const numericId = Number(identifier);
+    const exact = list.find((lot) => {
+      const lotNumber = Number(lot.LotNumber);
+      return (
+        lot.Id === numericId ||
+        lot.AuctionLotId === numericId ||
+        (Number.isFinite(lotNumber) && lotNumber === numericId)
+      );
+    });
+
+    const match = exact ?? list[0];
+    if (!match || !Number.isFinite(match.AuctionLotId)) return null;
+
+    const resolved = String(match.AuctionLotId);
+
+    bidIdLookupCache.set(identifier, resolved);
+    bidIdLookupCache.set(String(match.Id), resolved);
+    bidIdLookupCache.set(String(match.AuctionLotId), resolved);
+    if (match.LotNumber != null) {
+      bidIdLookupCache.set(String(match.LotNumber), resolved);
+    }
+
+    logger.info("🔵 Resolved bid id via lots/search", {
+      identifier,
+      lotId: match.Id,
+      auctionLotId: match.AuctionLotId,
+      lotNumber: match.LotNumber,
+      type: match.Type,
+    });
+
+    return resolved;
+  } catch (err) {
+    logger.debug("🟣 lots/search bid-id resolution failed", { identifier, err });
+    return null;
+  }
 }
 
 // ─── Bid increment tiers ───────────────────────────────────────────────────
@@ -361,13 +425,13 @@ export async function getCurrentPrice(
  *   $120 lot: 130,140,...,200,225,250,...,500,550,600,...,1000,1100,...,3000
  */
 const BID_INCREMENT_TIERS: Array<[number, number]> = [
-  [10, 1],         // $0 – $10:      $1 increments   → 1, 2, 3, ... 10
-  [20, 2],         // $10 – $20:     $2 increments   → 12, 14, 16, 18, 20
-  [50, 5],         // $20 – $50:     $5 increments   → 25, 30, 35, 40, 45, 50
-  [100, 10],       // $50 – $100:    $10 increments  → 60, 70, 80, 90, 100
-  [200, 10],       // $100 – $200:   $10 increments  → 110, 120, ... 200
-  [500, 25],       // $200 – $500:   $25 increments  → 225, 250, ... 500
-  [1000, 50],      // $500 – $1000:  $50 increments  → 550, 600, ... 1000
+  [10, 1], // $0 – $10:      $1 increments   → 1, 2, 3, ... 10
+  [20, 2], // $10 – $20:     $2 increments   → 12, 14, 16, 18, 20
+  [50, 5], // $20 – $50:     $5 increments   → 25, 30, 35, 40, 45, 50
+  [100, 10], // $50 – $100:    $10 increments  → 60, 70, 80, 90, 100
+  [200, 10], // $100 – $200:   $10 increments  → 110, 120, ... 200
+  [500, 25], // $200 – $500:   $25 increments  → 225, 250, ... 500
+  [1000, 50], // $500 – $1000:  $50 increments  → 550, 600, ... 1000
   [Infinity, 100], // $1000+:        $100 increments → 1100, 1200, ... 3000+
 ];
 
@@ -405,10 +469,7 @@ export function snapToValidBid(desiredAmount: number): number {
  * Returns the next valid bid above currentPrice, capped at maxBid.
  * Returns null if the next valid bid exceeds maxBid.
  */
-export function computeBidAmount(
-  currentPrice: number,
-  maxBid: number
-): number | null {
+export function computeBidAmount(currentPrice: number, maxBid: number): number | null {
   const nextBid = getNextValidBid(currentPrice);
   if (nextBid > maxBid) return null;
   return nextBid;
@@ -419,8 +480,85 @@ export function computeBidAmount(
 export interface BidResult {
   success: boolean;
   bidAmount?: number;
+  requestUrl?: string;
   error?: string;
   response?: unknown;
+}
+
+async function resolveBidExternalId(
+  externalId: string | null | undefined,
+  productUrl?: string
+): Promise<string | null> {
+  const normalizedExternalId = externalId?.trim() ?? "";
+
+  // Primary path: use payload/db externalId directly for bidding.
+  if (/^\d+$/.test(normalizedExternalId)) {
+    bidIdLookupCache.set(normalizedExternalId, normalizedExternalId);
+    return normalizedExternalId;
+  }
+
+  if (productUrl) {
+    const auctionLotId = await getAuctionLotId(productUrl);
+    if (auctionLotId != null) {
+      const resolved = String(auctionLotId);
+      bidIdLookupCache.set(resolved, resolved);
+      if (normalizedExternalId) {
+        bidIdLookupCache.set(normalizedExternalId, resolved);
+      }
+
+      if (normalizedExternalId && normalizedExternalId !== resolved) {
+        logger.info("🔵 Overriding bid id with AuctionLotId from URL", {
+          providedExternalId: normalizedExternalId,
+          resolvedExternalId: resolved,
+          productUrl,
+        });
+      }
+      return resolved;
+    }
+
+    const parsed = parseLotUrl(productUrl);
+    if (parsed?.id) {
+      const resolvedFromUrlId = await resolveAuctionLotIdFromSearch(parsed.id);
+      if (resolvedFromUrlId) return resolvedFromUrlId;
+    }
+  }
+
+  if (normalizedExternalId && /^\d+$/.test(normalizedExternalId)) {
+    const resolvedViaSearch = await resolveAuctionLotIdFromSearch(normalizedExternalId);
+    if (resolvedViaSearch) return resolvedViaSearch;
+
+    // Fallback: externalId may be the lot page Id instead of AuctionLotId.
+    // Try resolving via lots/detail (defaulting type=1 when URL is unavailable).
+    try {
+      const detailUrl = `${API_BASE}/lots/detail?id=${normalizedExternalId}&type=1`;
+      const res = await fetch(detailUrl, {
+        headers: BASE_HEADERS,
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as Partial<{ AuctionLotId: number }>;
+        if (typeof data.AuctionLotId === "number" && Number.isFinite(data.AuctionLotId)) {
+          const resolved = String(data.AuctionLotId);
+          bidIdLookupCache.set(normalizedExternalId, resolved);
+          bidIdLookupCache.set(resolved, resolved);
+
+          if (resolved !== normalizedExternalId) {
+            logger.info("🔵 Resolved lot id to AuctionLotId via fallback", {
+              providedExternalId: normalizedExternalId,
+              resolvedExternalId: resolved,
+            });
+          }
+          return resolved;
+        }
+      }
+    } catch {
+      // Ignore and fall back to raw numeric id.
+    }
+
+    return normalizedExternalId;
+  }
+
+  return null;
 }
 
 /**
@@ -433,13 +571,15 @@ export interface BidResult {
  */
 export async function placeBidApi(
   externalId: string,
-  amount: number
+  amount: number,
+  productUrl?: string
 ): Promise<BidResult> {
   const token = getAuthToken();
   if (!token) {
     return {
       success: false,
-      error: "No valid auth token. Please provide a JWT token via the /api/abc-auctions/auth/token endpoint.",
+      error:
+        "No valid auth token. Please provide a JWT token via the /api/abc-auctions/auth/token endpoint.",
     };
   }
 
@@ -449,10 +589,20 @@ export async function placeBidApi(
     return { success: false, error: `Invalid bid amount after snapping: ${amount} → ${bidAmount}` };
   }
 
-  const url = `${API_BASE}/bids/place?id=${externalId}&amount=${bidAmount}`;
+  const resolvedExternalId = await resolveBidExternalId(externalId, productUrl);
+  if (!resolvedExternalId) {
+    return {
+      success: false,
+      error: productUrl
+        ? `Could not resolve bid id for: ${productUrl}`
+        : `Invalid externalId: ${externalId}`,
+    };
+  }
+
+  const url = `${API_BASE}/bids/place?id=${resolvedExternalId}&amount=${bidAmount}`;
 
   logger.info("🟢 Placing bid via API", {
-    externalId,
+    externalId: resolvedExternalId,
     amount: bidAmount,
     url,
   });
@@ -477,11 +627,11 @@ export async function placeBidApi(
 
     if (res.ok) {
       logger.info("🟢 Bid placed successfully via API", {
-        externalId,
+        externalId: resolvedExternalId,
         amount: bidAmount,
         response: data,
       });
-      return { success: true, bidAmount, response: data };
+      return { success: true, bidAmount, requestUrl: url, response: data };
     }
 
     // Handle specific error codes
@@ -500,12 +650,14 @@ export async function placeBidApi(
     });
     return {
       success: false,
+      requestUrl: url,
       error: `API error ${res.status}: ${typeof data === "string" ? data : JSON.stringify(data)}`,
     };
   } catch (err) {
     logger.error("🔴 Bid API request failed", { url, err });
     return {
       success: false,
+      requestUrl: url,
       error: `Network error: ${err instanceof Error ? err.message : String(err)}`,
     };
   }

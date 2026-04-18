@@ -116,7 +116,7 @@ async function processSingleProduct(watched: InstanceType<typeof WatchedProduct>
     }
 
     await updateStatus(id, "active");
-    const result = await placeBidApi(watched.externalId, bidAmount);
+    const result = await placeBidApi(watched.externalId, bidAmount, watched.productUrl);
 
     if (result.success) {
       await updateStatus(id, "active", {
