@@ -446,7 +446,8 @@ function mapToProduct(
           raw.link ??
           raw.itemUrl ??
           raw.item_url ??
-          `${BASE_URL}/lots/${externalId}`
+          // The SPA only routes /lot/{type}/{id}; /lots/{id} opens a blank page.
+          `${BASE_URL}/lot/1/${externalId}`
       ),
       scrapedAt: new Date().toISOString(),
     };

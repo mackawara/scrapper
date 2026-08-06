@@ -32,16 +32,11 @@ export async function logBid(params: LogBidParams): Promise<void> {
   await connectDB();
 
   try {
-    // Determine status based on bid result
-    let status: "winning" | "losing" | "overMax" | "failed";
-
-    if (!params.success) {
-      status = "failed";
-    } else if (params.bidAmount >= params.maxBid) {
-      status = "overMax";
-    } else {
-      status = "winning"; // Assume winning unless we detect otherwise
-    }
+    // A successful bid makes us the high bidder; a later poll flips this to
+    // "losing" if someone comes over the top. Bidding *above* maxBid can no
+    // longer happen — the bidder refuses to compute such an amount — so
+    // "overMax" is only ever set by the outbid path below.
+    const status: "winning" | "failed" = params.success ? "winning" : "failed";
 
     const bid = await Bid.create({
       watchedProductId: params.watchedProductId,

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "verify:ladder": "node --experimental-strip-types --no-warnings scripts/verify-bid-ladder.mjs"
   },
   "dependencies": {
     "@emotion/cache": "^11.14.0",

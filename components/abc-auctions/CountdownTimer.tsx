@@ -2,21 +2,32 @@
 
 import { useEffect, useRef, useState } from "react";
 import Typography from "@mui/material/Typography";
-import { intervalToDuration, isPast, isValid, parseISO } from "date-fns";
+import { isValid, parseISO } from "date-fns";
 
-function getTimeLeft(endTime: string) {
+/**
+ * Milliseconds until `endTime`, or null once it has passed.
+ *
+ * Computed straight from the raw difference rather than date-fns'
+ * `intervalToDuration`, which buckets into months/years — a lot closing in 45
+ * days rendered as "15d" because the month component was dropped.
+ */
+function msLeft(endTime: string, now: number): number | null {
   const end = parseISO(endTime);
-  if (!isValid(end) || isPast(end)) return null;
+  if (!isValid(end)) return null;
+  const diff = end.getTime() - now;
+  return diff > 0 ? diff : null;
+}
 
-  const duration = intervalToDuration({ start: new Date(), end });
-  const diff = end.getTime() - Date.now();
-  return {
-    d: duration.days ?? 0,
-    h: duration.hours ?? 0,
-    m: duration.minutes ?? 0,
-    s: duration.seconds ?? 0,
-    diff,
-  };
+function format(diff: number): string {
+  const totalSeconds = Math.floor(diff / 1000);
+  const d = Math.floor(totalSeconds / 86400);
+  const h = Math.floor((totalSeconds % 86400) / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  return `${m}m ${s}s`;
 }
 
 export default function CountdownTimer({
@@ -26,31 +37,35 @@ export default function CountdownTimer({
   auctionEndTime: string;
   onClose?: () => void;
 }) {
-  const [timeLeft, setTimeLeft] = useState(() => getTimeLeft(auctionEndTime));
+  // Ticking a clock rather than the remaining time means the countdown always
+  // reflects the latest `auctionEndTime` prop — which moves if the platform
+  // extends a lot on a late bid.
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const diff = msLeft(auctionEndTime, now);
+  const closed = diff == null;
+
+  // Don't fire onClose for a lot that was already over when we first rendered.
+  const suppressClose = useRef(closed);
   const firedClose = useRef(false);
 
   useEffect(() => {
-    const end = parseISO(auctionEndTime);
-    if (!isValid(end) || isPast(end)) {
-      // Already closed when mounted — don't re-fire onClose
+    if (!closed) {
+      suppressClose.current = false;
+      firedClose.current = false;
       return;
     }
-    firedClose.current = false;
-    const id = setInterval(() => {
-      const tl = getTimeLeft(auctionEndTime);
-      setTimeLeft(tl);
-      if (!tl) {
-        clearInterval(id);
-        if (!firedClose.current) {
-          firedClose.current = true;
-          onClose?.();
-        }
-      }
-    }, 1000);
-    return () => clearInterval(id);
-  }, [auctionEndTime, onClose]);
+    if (suppressClose.current || firedClose.current) return;
+    firedClose.current = true;
+    onClose?.();
+  }, [closed, onClose]);
 
-  if (!timeLeft) {
+  if (closed) {
     return (
       <Typography variant="caption" color="error" fontWeight={600}>
         Auction closed
@@ -58,16 +73,13 @@ export default function CountdownTimer({
     );
   }
 
-  const isUrgent = timeLeft.diff <= 11 * 60 * 1000;
-  const formattedTimeLeft =
-    timeLeft.d > 0
-      ? `${timeLeft.d}d ${timeLeft.h}h ${timeLeft.m}m`
-      : `${timeLeft.h}h ${timeLeft.m}m ${timeLeft.s}s`;
+  // Matches the sniper's default 10-minute window, so "⚡" means "bidding now".
+  const isUrgent = diff <= 10 * 60 * 1000;
 
   return (
     <Typography variant="caption" fontWeight={600} color={isUrgent ? "error" : "text.secondary"}>
       {isUrgent && "⚡ "}
-      {formattedTimeLeft}
+      {format(diff)}
     </Typography>
   );
 }

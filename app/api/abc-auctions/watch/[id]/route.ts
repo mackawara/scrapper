@@ -17,13 +17,24 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: "maxBid must be >= minBid" }, { status: 400 });
     }
 
+    const existing = await WatchedProduct.findById(id);
+    if (!existing) return NextResponse.json({ error: "Watch entry not found" }, { status: 404 });
+
+    // Raising the ceiling on a lot we'd already given up on puts it back in
+    // play, and takes effect on the very next tick rather than the next poll.
+    const reArm =
+      existing.bidderStatus === "maxReached" && maxBid != null && maxBid > existing.maxBid;
+
     const updated = await WatchedProduct.findByIdAndUpdate(
       id,
-      { ...(minBid != null && { minBid }), ...(maxBid != null && { maxBid }) },
+      {
+        ...(minBid != null && { minBid }),
+        ...(maxBid != null && { maxBid }),
+        ...(reArm && { bidderStatus: "armed", lastError: null }),
+        nextCheckAt: new Date(),
+      },
       { new: true }
     );
-
-    if (!updated) return NextResponse.json({ error: "Watch entry not found" }, { status: 404 });
 
     return NextResponse.json({ watched: updated });
   } catch (err) {
@@ -40,8 +51,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     const watched = await WatchedProduct.findById(id);
     if (!watched) return NextResponse.json({ error: "Watch entry not found" }, { status: 404 });
 
-    // Stop any running bidder loop before deleting
-    stopMonitor(id);
+    // Take the lot out of the scheduler before deleting it
+    await stopMonitor(id);
     await WatchedProduct.findByIdAndDelete(id);
 
     logger.info("🟢 Removed from watch list", { id });

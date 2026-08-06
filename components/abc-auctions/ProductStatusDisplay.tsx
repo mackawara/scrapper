@@ -6,37 +6,12 @@ import Tooltip from "@mui/material/Tooltip";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import { BidderStatus, BidStatusData } from "@/lib/abc-auctions/types";
+import { BID_STATUS_DISPLAY, bidderStatusDisplay } from "@/lib/abc-auctions/status-display";
 
 interface ProductStatusDisplayProps {
   bidderStatus?: BidderStatus;
   bidStatus?: BidStatusData;
 }
-
-const BIDDER_STATUS_CONFIG: Record<
-  BidderStatus,
-  { label: string; color: "success" | "primary" | "error" | "warning" | "default" }
-> = {
-  active: { label: "Active Bidding", color: "success" },
-  won: { label: "Won", color: "primary" },
-  outbid: { label: "Outbid", color: "error" },
-  waiting: { label: "Waiting", color: "warning" },
-  idle: { label: "Idle", color: "default" },
-  stopped: { label: "Stopped", color: "default" },
-};
-
-const BID_STATUS_CONFIG: Record<
-  string,
-  { label: string; color: "success" | "primary" | "error" | "warning" | "default"; icon?: string }
-> = {
-  winning: { label: "Winning", color: "success", icon: "✓" },
-  losing: { label: "Losing", color: "error", icon: "✗" },
-  overMax: { label: "Over Max", color: "warning", icon: "⚠" },
-  failed: { label: "Failed", color: "error", icon: "✗" },
-  outbid: { label: "Outbid", color: "error", icon: "✗" },
-  won: { label: "Won 🏆", color: "primary", icon: "★" },
-  lost: { label: "Lost", color: "default", icon: "✗" },
-  tied: { label: "Tied", color: "warning", icon: "=" },
-};
 
 export default function ProductStatusDisplay({
   bidderStatus,
@@ -46,12 +21,14 @@ export default function ProductStatusDisplay({
     <Stack spacing={1} width="100%">
       {/* Bidder Status */}
       {bidderStatus && (
-        <Chip
-          label={BIDDER_STATUS_CONFIG[bidderStatus]?.label || bidderStatus}
-          color={BIDDER_STATUS_CONFIG[bidderStatus]?.color || "default"}
-          size="small"
-          variant="filled"
-        />
+        <Tooltip title={bidderStatusDisplay(bidderStatus).hint} arrow>
+          <Chip
+            label={bidderStatusDisplay(bidderStatus).label}
+            color={bidderStatusDisplay(bidderStatus).color}
+            size="small"
+            variant="filled"
+          />
+        </Tooltip>
       )}
 
       {/* Bid Status with Details */}
@@ -85,8 +62,8 @@ export default function ProductStatusDisplay({
         >
           <Box>
             <Chip
-              label={BID_STATUS_CONFIG[bidStatus.status]?.label || bidStatus.status}
-              color={BID_STATUS_CONFIG[bidStatus.status]?.color || "default"}
+              label={BID_STATUS_DISPLAY[bidStatus.status]?.label || bidStatus.status}
+              color={BID_STATUS_DISPLAY[bidStatus.status]?.color || "default"}
               size="small"
               variant="outlined"
               sx={{
@@ -104,8 +81,8 @@ export default function ProductStatusDisplay({
       {/* Final Status (after auction ends) */}
       {bidStatus?.finalStatus && (
         <Chip
-          label={BID_STATUS_CONFIG[bidStatus.finalStatus]?.label || bidStatus.finalStatus}
-          color={BID_STATUS_CONFIG[bidStatus.finalStatus]?.color || "default"}
+          label={BID_STATUS_DISPLAY[bidStatus.finalStatus]?.label || bidStatus.finalStatus}
+          color={BID_STATUS_DISPLAY[bidStatus.finalStatus]?.color || "default"}
           size="small"
           variant="filled"
           sx={{ fontWeight: 600 }}

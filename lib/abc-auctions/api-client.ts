@@ -6,10 +6,22 @@
  *
  * The login endpoint requires a CAPTCHA code that can't be automated,
  * so we store a JWT token that the user provides (from a manual login
- * session) and refresh it before expiry.
+ * session). It is persisted to MongoDB so it survives process restarts,
+ * and the UI warns before it expires.
+ *
+ * All outbound calls go through `limitedFetch` (see rate-limiter.ts).
  */
 
 import logger from "@/lib/logger";
+import connectDB from "@/lib/mongoose";
+import AuthToken from "@/models/AuthToken";
+import { limitedFetch } from "./rate-limiter";
+import { TOKEN_EXPIRY_WARNING_MS } from "./constants";
+import { BidIncrementTier, FALLBACK_BID_INCREMENTS } from "./bid-ladder";
+
+// The ladder maths lives in bid-ladder.ts (import-free so it can be verified
+// directly against the live API — see scripts/verify-bid-ladder.mjs).
+export * from "./bid-ladder";
 
 const API_BASE = process.env.ABC_AUCTIONS_API_URL ?? "https://app-api.abcauctions.co.zw";
 const SITE_BASE = process.env.ABC_AUCTIONS_BASE_URL ?? "https://app.abcauctions.co.zw";
@@ -50,16 +62,20 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
 
 // ─── Token management ──────────────────────────────────────────────────────
 
-/**
- * Store a JWT token (provided by the user from a manual login).
- * Returns token info or null if the token is invalid/expired.
- */
-export function setAuthToken(token: string): {
+export interface StoredTokenSummary {
   sub: string;
   sid: number;
   expiresAt: string;
   expiresInHours: number;
-} | null {
+}
+
+/**
+ * Store a JWT token in memory (provided by the user from a manual login).
+ * Returns token info or null if the token is invalid/expired.
+ *
+ * Does not persist — use `storeAuthToken` for that.
+ */
+export function setAuthToken(token: string): StoredTokenSummary | null {
   const payload = decodeJwtPayload(token);
   if (!payload || typeof payload.exp !== "number") {
     logger.warn("🌕 Invalid JWT token — could not decode payload");
@@ -102,6 +118,10 @@ export function setAuthToken(token: string): {
 /**
  * Get the current auth token if it's still valid.
  * Returns null if no token or if it's expired.
+ *
+ * This is the synchronous, in-memory view. Server code that may run on a
+ * freshly booted process should prefer `ensureAuthToken()`, which falls back
+ * to the persisted copy in MongoDB.
  */
 export function getAuthToken(): string | null {
   if (!currentToken) return null;
@@ -113,16 +133,109 @@ export function getAuthToken(): string | null {
   return currentToken.token;
 }
 
+// ─── Persistence ───────────────────────────────────────────────────────────
+
+/** Write the in-memory token through to MongoDB. */
+async function persistToken(stored: StoredToken): Promise<void> {
+  try {
+    await connectDB();
+    await AuthToken.findOneAndUpdate(
+      { singleton: "abc-auctions" },
+      {
+        singleton: "abc-auctions",
+        token: stored.token,
+        expiresAt: new Date(stored.expiresAt),
+        sub: stored.sub,
+        sid: stored.sid,
+      },
+      { upsert: true }
+    );
+    logger.info("🟢 Auth token persisted to MongoDB");
+  } catch (err) {
+    // The token still works in-memory — persistence failing is not fatal.
+    logger.error("🔴 Failed to persist auth token", { err });
+  }
+}
+
+/**
+ * Load the persisted token into memory. Returns true if a usable token was
+ * restored. Called on boot and lazily whenever memory is empty.
+ */
+export async function loadPersistedToken(): Promise<boolean> {
+  try {
+    await connectDB();
+    const doc = await AuthToken.findOne({ singleton: "abc-auctions" }).lean();
+    if (!doc) return false;
+
+    const expiresAt = new Date(doc.expiresAt).getTime();
+    if (Date.now() >= expiresAt) {
+      logger.warn("🌕 Persisted auth token has expired — a new token is needed", {
+        expiredAt: new Date(expiresAt).toISOString(),
+      });
+      return false;
+    }
+
+    currentToken = {
+      token: doc.token,
+      expiresAt,
+      sub: doc.sub ?? "",
+      sid: doc.sid ?? 0,
+    };
+
+    logger.info("🟢 Auth token restored from MongoDB", {
+      sub: currentToken.sub,
+      expiresAt: new Date(expiresAt).toISOString(),
+    });
+    return true;
+  } catch (err) {
+    logger.error("🔴 Failed to load persisted auth token", { err });
+    return false;
+  }
+}
+
+/**
+ * Get a valid token, falling back to the persisted copy when this process
+ * has just started. Use this from the bidder and any long-running job.
+ */
+export async function ensureAuthToken(): Promise<string | null> {
+  const inMemory = getAuthToken();
+  if (inMemory) return inMemory;
+
+  // Env var takes priority — it is how a fresh deploy is seeded.
+  initTokenFromEnv();
+  const fromEnv = getAuthToken();
+  if (fromEnv) return fromEnv;
+
+  await loadPersistedToken();
+  return getAuthToken();
+}
+
+/**
+ * Store a token and persist it. Prefer this over `setAuthToken` anywhere the
+ * token should survive a restart.
+ */
+export async function storeAuthToken(token: string): Promise<StoredTokenSummary | null> {
+  const result = setAuthToken(token);
+  if (result && currentToken) {
+    await persistToken(currentToken);
+  }
+  return result;
+}
+
 /**
  * Get info about the current token (for UI display).
  */
-export function getTokenInfo(): {
+export interface TokenInfo {
   hasToken: boolean;
   sub: string | null;
   expiresAt: string | null;
   expiresInHours: number | null;
   isExpired: boolean;
-} {
+  /** True once the token is close enough to expiry that bidding is at risk. */
+  isExpiringSoon: boolean;
+}
+
+export function getTokenInfo(): TokenInfo {
   if (!currentToken) {
     return {
       hasToken: false,
@@ -130,14 +243,14 @@ export function getTokenInfo(): {
       expiresAt: null,
       expiresInHours: null,
       isExpired: false,
+      isExpiringSoon: false,
     };
   }
 
   const now = Date.now();
-  const isExpired = now >= currentToken.expiresAt;
-  const expiresInHours = isExpired
-    ? 0
-    : Math.round(((currentToken.expiresAt - now) / 3600000) * 10) / 10;
+  const msRemaining = currentToken.expiresAt - now;
+  const isExpired = msRemaining <= 0;
+  const expiresInHours = isExpired ? 0 : Math.round((msRemaining / 3600000) * 10) / 10;
 
   return {
     hasToken: true,
@@ -145,12 +258,28 @@ export function getTokenInfo(): {
     expiresAt: new Date(currentToken.expiresAt).toISOString(),
     expiresInHours,
     isExpired,
+    isExpiringSoon: !isExpired && msRemaining <= TOKEN_EXPIRY_WARNING_MS,
   };
 }
 
-/** Clear the stored token. */
-export function clearAuthToken(): void {
+/**
+ * Token info that also consults the persisted copy, so a freshly booted
+ * process reports the real state rather than "no token".
+ */
+export async function getTokenInfoAsync(): Promise<TokenInfo> {
+  await ensureAuthToken();
+  return getTokenInfo();
+}
+
+/** Clear the stored token, in memory and in MongoDB. */
+export async function clearAuthToken(): Promise<void> {
   currentToken = null;
+  try {
+    await connectDB();
+    await AuthToken.deleteOne({ singleton: "abc-auctions" });
+  } catch (err) {
+    logger.error("🔴 Failed to delete persisted auth token", { err });
+  }
   logger.info("🟢 Auth token cleared");
 }
 
@@ -187,7 +316,7 @@ export async function loginWithApi(
   code: string
 ): Promise<string | null> {
   try {
-    const res = await fetch(`${API_BASE}/onboarding/login`, {
+    const res = await limitedFetch(`${API_BASE}/onboarding/login`, {
       method: "POST",
       headers: BASE_HEADERS,
       body: JSON.stringify({ Email: email, Password: password, Code: code }),
@@ -233,7 +362,7 @@ export async function loginWithApi(
 
 // ─── Lot detail (price check) ──────────────────────────────────────────────
 
-interface LotDetailResponse {
+export interface LotDetailResponse {
   Id: number;
   CurrentBid: number | null;
   StartingBid: number;
@@ -241,6 +370,16 @@ interface LotDetailResponse {
   EndDate: string;
   AuctionLotId: number;
   Type: number;
+  /**
+   * User-scoped fields. These are only meaningful when the request carried a
+   * Bearer token — unauthenticated they come back as false/0 for everyone.
+   */
+  HighestBidder?: boolean;
+  MaxBid?: number;
+  Watching?: boolean;
+  CurrentBidderId?: number | null;
+  /** Canonical browser URL for the lot, as the site itself builds it. */
+  Url?: string;
 }
 
 interface SearchLotResult {
@@ -263,6 +402,15 @@ const auctionLotIdCache = new Map<string, number>();
 const bidIdLookupCache = new Map<string, string>();
 
 /**
+ * Very short-lived cache of full lot details, opt-in via `maxAgeMs`.
+ *
+ * The watch list polls every 15s for N lots; without this, opening two browser
+ * tabs would double the API load for no benefit. The bidder never opts in — it
+ * must see the true current price before committing money.
+ */
+const lotDetailCache = new Map<string, { at: number; data: LotDetailResponse }>();
+
+/**
  * Extract lot ID and type from a product URL.
  */
 export function parseLotUrl(productUrl: string): { id: string; type: string } | null {
@@ -280,21 +428,60 @@ export function parseLotUrl(productUrl: string): { id: string; type: string } | 
 }
 
 /**
+ * Normalise a lot URL to the form the ABC web app can actually route.
+ *
+ * The Angular app only knows `/lot/{type}/{id}`. An older scraper stored
+ * `/lots/{id}`, which the SPA serves a 200 for (index.html is returned for any
+ * path) but has no route for, so the tab opens to a blank page. Our own API
+ * parsing accepts both, which is why this went unnoticed.
+ */
+export function canonicalLotUrl(productUrl: string): string {
+  const parsed = parseLotUrl(productUrl);
+  if (!parsed) return productUrl;
+  return `${SITE_BASE}/lot/${parsed.type}/${parsed.id}`;
+}
+
+/**
  * Fetch the full lot detail from the API.
  * Always fetches fresh data — prices change frequently during active bidding.
  * Caches the AuctionLotId mapping separately (it never changes).
+ *
+ * Pass `{ authenticated: true }` to send the Bearer token, which makes the
+ * API populate the user-scoped fields (`HighestBidder`, `MaxBid`, `Watching`).
+ * `HighestBidder` is the only trustworthy "am I winning" signal — comparing
+ * the current price to our last bid guesses wrong whenever someone else
+ * matches our amount through the site's own proxy bidding.
  */
-export async function getLotDetail(productUrl: string): Promise<LotDetailResponse | null> {
+export async function getLotDetail(
+  productUrl: string,
+  opts?: { authenticated?: boolean; maxAgeMs?: number }
+): Promise<LotDetailResponse | null> {
   const parsed = parseLotUrl(productUrl);
   if (!parsed) {
     logger.warn("🌕 Cannot parse lot URL", { productUrl });
     return null;
   }
 
+  const cacheKey = `${parsed.type}:${parsed.id}:${opts?.authenticated ? "auth" : "anon"}`;
+  if (opts?.maxAgeMs) {
+    const hit = lotDetailCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < opts.maxAgeMs) return hit.data;
+  }
+
+  const headers: Record<string, string> = { ...BASE_HEADERS };
+  if (opts?.authenticated) {
+    const token = await ensureAuthToken();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    } else {
+      logger.debug("🟣 No token available — fetching lot detail unauthenticated");
+    }
+  }
+
   try {
     const url = `${API_BASE}/lots/detail?id=${parsed.id}&type=${parsed.type}`;
-    const res = await fetch(url, {
-      headers: BASE_HEADERS,
+    const res = await limitedFetch(url, {
+      headers,
       signal: AbortSignal.timeout(15_000),
     });
 
@@ -309,13 +496,14 @@ export async function getLotDetail(productUrl: string): Promise<LotDetailRespons
     const data = (await res.json()) as LotDetailResponse;
 
     // Cache the AuctionLotId mapping (stable, never changes for a lot)
-    const cacheKey = `${parsed.type}:${parsed.id}`;
-    auctionLotIdCache.set(cacheKey, data.AuctionLotId);
+    auctionLotIdCache.set(`${parsed.type}:${parsed.id}`, data.AuctionLotId);
+    lotDetailCache.set(cacheKey, { at: Date.now(), data });
 
     logger.debug("🔵 Lot detail fetched", {
       urlId: parsed.id,
       auctionLotId: data.AuctionLotId,
       currentBid: data.CurrentBid,
+      highestBidder: data.HighestBidder,
     });
 
     return data;
@@ -365,7 +553,7 @@ async function resolveAuctionLotIdFromSearch(identifier: string): Promise<string
       Query: identifier,
     });
 
-    const res = await fetch(`${API_BASE}/lots/search?${params.toString()}`, {
+    const res = await limitedFetch(`${API_BASE}/lots/search?${params.toString()}`, {
       headers: BASE_HEADERS,
       signal: AbortSignal.timeout(15_000),
     });
@@ -413,66 +601,53 @@ async function resolveAuctionLotIdFromSearch(identifier: string): Promise<string
   }
 }
 
-// ─── Bid increment tiers ───────────────────────────────────────────────────
+// ─── Bid increments ────────────────────────────────────────────────────────
+
+let cachedIncrements: BidIncrementTier[] | null = null;
+let incrementsFetchedAt = 0;
+let usingFallback = false;
+const INCREMENTS_TTL_MS = 6 * 60 * 60 * 1000;
+/** Short TTL when we had to fall back, so a transient failure self-heals. */
+const INCREMENTS_FALLBACK_TTL_MS = 5 * 60 * 1000;
 
 /**
- * ABC Auctions only accepts bids at specific increment boundaries.
- * These tiers define: [maxPrice, increment] — the increment applies
- * for prices up to (and including) maxPrice.
- *
- * Verified from live dropdown data:
- *   $3 lot: 4,5,6,7,8,9,10,12,14,16,18,20,25,30,35,40,45,50,60,70,80,90,100,...
- *   $120 lot: 130,140,...,200,225,250,...,500,550,600,...,1000,1100,...,3000
+ * The live increment ladder, from `GET /profile/me` → `Settings.BidIncrements`.
+ * This is the same source the website's own bid dropdown uses, so following it
+ * guarantees our amounts land on boundaries the server will accept.
  */
-const BID_INCREMENT_TIERS: Array<[number, number]> = [
-  [10, 1], // $0 – $10:      $1 increments   → 1, 2, 3, ... 10
-  [20, 2], // $10 – $20:     $2 increments   → 12, 14, 16, 18, 20
-  [50, 5], // $20 – $50:     $5 increments   → 25, 30, 35, 40, 45, 50
-  [100, 10], // $50 – $100:    $10 increments  → 60, 70, 80, 90, 100
-  [200, 10], // $100 – $200:   $10 increments  → 110, 120, ... 200
-  [500, 25], // $200 – $500:   $25 increments  → 225, 250, ... 500
-  [1000, 50], // $500 – $1000:  $50 increments  → 550, 600, ... 1000
-  [Infinity, 100], // $1000+:        $100 increments → 1100, 1200, ... 3000+
-];
-
-/**
- * Get the bid increment for a given price.
- */
-export function getBidIncrement(currentPrice: number): number {
-  for (const [maxPrice, increment] of BID_INCREMENT_TIERS) {
-    if (currentPrice < maxPrice) return increment;
+export async function getBidIncrements(): Promise<BidIncrementTier[]> {
+  const ttl = usingFallback ? INCREMENTS_FALLBACK_TTL_MS : INCREMENTS_TTL_MS;
+  if (cachedIncrements && Date.now() - incrementsFetchedAt < ttl) {
+    return cachedIncrements;
   }
-  return 250; // fallback
-}
 
-/**
- * Get the next valid bid amount above the current price.
- * Snaps UP to the nearest valid increment boundary.
- */
-export function getNextValidBid(currentPrice: number): number {
-  const increment = getBidIncrement(currentPrice);
-  // Round up to the next increment boundary
-  return Math.ceil((currentPrice + 1) / increment) * increment;
-}
+  try {
+    const res = await limitedFetch(`${API_BASE}/profile/me`, {
+      headers: BASE_HEADERS,
+      signal: AbortSignal.timeout(15_000),
+    });
 
-/**
- * Snap a desired bid amount to the nearest valid amount (round down).
- * Returns the highest valid bid that doesn't exceed the desired amount.
- */
-export function snapToValidBid(desiredAmount: number): number {
-  const increment = getBidIncrement(desiredAmount);
-  return Math.floor(desiredAmount / increment) * increment;
-}
+    if (res.ok) {
+      const data = (await res.json()) as { Settings?: { BidIncrements?: BidIncrementTier[] } };
+      const tiers = data.Settings?.BidIncrements;
 
-/**
- * Given a current price and a max budget, compute the bid amount to place.
- * Returns the next valid bid above currentPrice, capped at maxBid.
- * Returns null if the next valid bid exceeds maxBid.
- */
-export function computeBidAmount(currentPrice: number, maxBid: number): number | null {
-  const nextBid = getNextValidBid(currentPrice);
-  if (nextBid > maxBid) return null;
-  return nextBid;
+      if (Array.isArray(tiers) && tiers.length > 0) {
+        cachedIncrements = [...tiers].sort((a, b) => a.MinimumValue - b.MinimumValue);
+        incrementsFetchedAt = Date.now();
+        usingFallback = false;
+        logger.debug("🔵 Bid increments refreshed", { tiers: cachedIncrements.length });
+        return cachedIncrements;
+      }
+    }
+    logger.warn("🌕 Could not read BidIncrements from /profile/me — using fallback ladder");
+  } catch (err) {
+    logger.warn("🌕 Failed to fetch bid increments — using fallback ladder", { err });
+  }
+
+  cachedIncrements = FALLBACK_BID_INCREMENTS;
+  incrementsFetchedAt = Date.now();
+  usingFallback = true;
+  return cachedIncrements;
 }
 
 // ─── Bid placement via API ─────────────────────────────────────────────────
@@ -531,7 +706,7 @@ async function resolveBidExternalId(
     // Try resolving via lots/detail (defaulting type=1 when URL is unavailable).
     try {
       const detailUrl = `${API_BASE}/lots/detail?id=${normalizedExternalId}&type=1`;
-      const res = await fetch(detailUrl, {
+      const res = await limitedFetch(detailUrl, {
         headers: BASE_HEADERS,
         signal: AbortSignal.timeout(10_000),
       });
@@ -574,7 +749,7 @@ export async function placeBidApi(
   amount: number,
   productUrl?: string
 ): Promise<BidResult> {
-  const token = getAuthToken();
+  const token = await ensureAuthToken();
   if (!token) {
     return {
       success: false,
@@ -583,10 +758,12 @@ export async function placeBidApi(
     };
   }
 
-  // Snap to a valid bid amount
-  const bidAmount = snapToValidBid(amount);
-  if (bidAmount <= 0) {
-    return { success: false, error: `Invalid bid amount after snapping: ${amount} → ${bidAmount}` };
+  // The caller is responsible for producing a ladder-valid amount (see
+  // computeBidAmount). Re-snapping here would corrupt a correct amount, so we
+  // only sanity-check it.
+  const bidAmount = Math.round(amount * 100) / 100;
+  if (!(bidAmount > 0)) {
+    return { success: false, error: `Invalid bid amount: ${amount}` };
   }
 
   const resolvedExternalId = await resolveBidExternalId(externalId, productUrl);
@@ -608,7 +785,7 @@ export async function placeBidApi(
   });
 
   try {
-    const res = await fetch(url, {
+    const res = await limitedFetch(url, {
       method: "GET",
       headers: {
         ...BASE_HEADERS,
@@ -637,7 +814,7 @@ export async function placeBidApi(
     // Handle specific error codes
     if (res.status === 401) {
       logger.warn("🌕 Auth token rejected — clearing token");
-      clearAuthToken();
+      await clearAuthToken();
       return {
         success: false,
         error: "Auth token expired or invalid. Please provide a new token.",

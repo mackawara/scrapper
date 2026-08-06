@@ -1,14 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/mongoose";
 import WatchedProduct from "@/models/WatchedProduct";
-import { startMonitor, stopMonitor, getMonitorStatuses } from "@/lib/abc-auctions/bidder";
+import {
+  startMonitor,
+  stopMonitor,
+  getMonitorStatuses,
+  getSchedulerState,
+} from "@/lib/abc-auctions/bidder";
+import { getTokenInfoAsync } from "@/lib/abc-auctions/api-client";
 import logger from "@/lib/logger";
-import { differenceInMilliseconds } from "date-fns";
-import { TWENTY_FOUR_HOURS_MS } from "@/lib/abc-auctions/constants";
 
 export async function GET() {
-  const statuses = await getMonitorStatuses();
-  return NextResponse.json({ monitors: statuses });
+  const [monitors, scheduler, tokenInfo] = await Promise.all([
+    getMonitorStatuses(),
+    getSchedulerState(),
+    getTokenInfoAsync(),
+  ]);
+  return NextResponse.json({ monitors, scheduler, tokenInfo });
 }
 
 export async function POST(req: NextRequest) {
@@ -26,12 +34,10 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "stop") {
-      stopMonitor(watchedProductId);
-      logger.info("🟢 Stop signal sent", { watchedProductId });
-      return NextResponse.json({ status: "stop_requested" });
+      await stopMonitor(watchedProductId);
+      return NextResponse.json({ status: "stopped" });
     }
 
-    // Default: start
     if (watched.maxBid <= 0) {
       return NextResponse.json(
         { error: "maxBid must be greater than 0 to start monitor" },
@@ -39,15 +45,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    startMonitor(watchedProductId);
+    await startMonitor(watchedProductId);
 
-    const timeLeftMs = differenceInMilliseconds(new Date(watched.auctionEndTime), new Date());
-    const bidderStatus = timeLeftMs > TWENTY_FOUR_HOURS_MS ? "waiting" : "active";
+    // Starting a monitor with no token means it will watch but never bid —
+    // say so now rather than failing silently at the wire.
+    const tokenInfo = await getTokenInfoAsync();
 
-    logger.info("🟢 Monitor started", { watchedProductId, bidderStatus });
-    return NextResponse.json({ status: "started", bidderStatus });
+    return NextResponse.json({
+      status: "started",
+      bidderStatus: "waiting",
+      tokenInfo,
+      ...(!tokenInfo.hasToken && {
+        warning: "No auth token set — this lot will be watched but no bid can be placed.",
+      }),
+    });
   } catch (err) {
     logger.error("🔴 POST /api/abc-auctions/bid/monitor failed", { err });
-    return NextResponse.json({ error: "Failed to start monitor" }, { status: 500 });
+    return NextResponse.json({ error: "Failed to update monitor" }, { status: 500 });
   }
 }

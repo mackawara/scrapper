@@ -4,7 +4,7 @@ module.exports = {
       name: "scrapper",
       script: "npm",
       args: "start",
-      cwd: "/home/ubuntu/scrapper",
+      cwd: "/home/ubuntu/repos/scrapper",
       instances: 1,
       exec_mode: "cluster",
       env: {
@@ -12,7 +12,7 @@ module.exports = {
         PORT: 3000,
       },
       // Environment variables from .env
-      env_file: "/home/ubuntu/scrapper/.env",
+      env_file: "/home/ubuntu/repos/scrapper/.env",
 
       // Auto restart
       watch: false,
@@ -22,8 +22,8 @@ module.exports = {
       // Logs
       merge_logs: true,
       log_date_format: "YYYY-MM-DD HH:mm:ss Z",
-      error_file: "/home/ubuntu/scrapper/logs/error.log",
-      out_file: "/home/ubuntu/scrapper/logs/out.log",
+      error_file: "/home/ubuntu/repos/scrapper/logs/error.log",
+      out_file: "/home/ubuntu/repos/scrapper/logs/out.log",
 
       // Restart on crash
       autorestart: true,

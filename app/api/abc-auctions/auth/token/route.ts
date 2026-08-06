@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import logger from "@/lib/logger";
-import { setAuthToken, getTokenInfo, clearAuthToken } from "@/lib/abc-auctions/api-client";
+import { storeAuthToken, getTokenInfoAsync, clearAuthToken } from "@/lib/abc-auctions/api-client";
 
 /**
  * GET /api/abc-auctions/auth/token
@@ -8,7 +8,7 @@ import { setAuthToken, getTokenInfo, clearAuthToken } from "@/lib/abc-auctions/a
  * Returns the current auth token status (has token, expiry, etc.).
  */
 export async function GET() {
-  const info = getTokenInfo();
+  const info = await getTokenInfoAsync();
   return NextResponse.json(info);
 }
 
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     // Strip "Bearer " prefix if included
     const cleanToken = token.replace(/^Bearer\s+/i, "").trim();
 
-    const result = setAuthToken(cleanToken);
+    const result = await storeAuthToken(cleanToken);
 
     if (!result) {
       return NextResponse.json({ error: "Invalid or expired JWT token" }, { status: 400 });
@@ -60,6 +60,6 @@ export async function POST(req: NextRequest) {
  * Clear the stored auth token.
  */
 export async function DELETE() {
-  clearAuthToken();
+  await clearAuthToken();
   return NextResponse.json({ status: "token_cleared" });
 }

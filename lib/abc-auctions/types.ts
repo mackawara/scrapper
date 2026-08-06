@@ -1,4 +1,46 @@
-export type BidderStatus = "idle" | "waiting" | "active" | "won" | "outbid" | "stopped";
+/**
+ * Lifecycle of a watched lot.
+ *
+ *   idle       — added to the watch list, monitoring not started
+ *   waiting    — monitored, but still outside the snipe window
+ *   armed      — inside the snipe window, watching for the moment to bid
+ *   bidding    — a bid request is in flight
+ *   winning    — we hold the high bid
+ *   outbid     — someone is above us and we still have budget left
+ *   maxReached — price is beyond maxBid; we stop bidding but keep watching
+ *                so the final outcome gets recorded
+ *   won        — auction closed with us on top
+ *   lost       — auction closed with someone else on top
+ *   stopped    — paused by the user
+ *   error      — last poll or bid failed; see lastError
+ */
+export const BIDDER_STATUSES = [
+  "idle",
+  "waiting",
+  "armed",
+  "bidding",
+  "winning",
+  "outbid",
+  "maxReached",
+  "won",
+  "lost",
+  "stopped",
+  "error",
+] as const;
+
+export type BidderStatus = (typeof BIDDER_STATUSES)[number];
+
+/** Statuses where the scheduler stops touching the lot entirely. */
+export const TERMINAL_BIDDER_STATUSES: readonly BidderStatus[] = ["won", "lost", "stopped"];
+
+/** Statuses where the lot is under active automated management. */
+export const RUNNING_BIDDER_STATUSES: readonly BidderStatus[] = [
+  "waiting",
+  "armed",
+  "bidding",
+  "winning",
+  "outbid",
+];
 
 export interface AuctionProductData {
   externalId: string;
@@ -33,8 +75,14 @@ export interface WatchedProductData {
   bidderStatus: BidderStatus;
   lastBidAmount: number | null;
   lastBidAt: string | null;
+  currentPrice: number | null;
+  isHighestBidder: boolean | null;
+  bidCount: number;
+  lastError: string | null;
   auctionEndTime: string;
   createdAt: string;
+  /** Set by GET /api/abc-auctions/watch — the auction has finished. */
+  isClosed?: boolean;
   latestBidStatus?: BidStatusData;
 }
 
@@ -43,6 +91,21 @@ export interface MonitorStatus {
   bidderStatus: BidderStatus;
   lastBidAmount: number | null;
   lastBidAt: string | null;
+  currentPrice: number | null;
+  isHighestBidder: boolean | null;
+  bidCount: number;
+  lastError: string | null;
+  auctionEndTime: string;
+  /** Milliseconds until this lot enters the snipe window (0 once inside). */
+  msUntilSnipeWindow: number;
+}
+
+export interface SchedulerState {
+  running: boolean;
+  activeLots: number;
+  lotsInSnipeWindow: number;
+  lastTickAt: string | null;
+  snipeWindowMinutes: number;
 }
 
 export interface WishlistMatchData {

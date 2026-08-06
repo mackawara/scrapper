@@ -39,6 +39,8 @@ import {
   AuctionProductData,
   BidStatusData,
   MonitorStatus,
+  RUNNING_BIDDER_STATUSES,
+  SchedulerState,
   WatchedProductData,
 } from "@/lib/abc-auctions/types";
 
@@ -63,12 +65,17 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Settings", href: "/abc-auctions/settings", icon: <SettingsIcon fontSize="small" /> },
 ];
 
-function toAuctionProduct(w: WatchedProductData): AuctionProductData {
+/**
+ * Shape a watched lot for the shared ProductCard. `currentPrice` comes from
+ * the live-enriched watch endpoint, falling back to whatever the bidder last
+ * recorded rather than to 0 — a card reading "$0" looked like a free lot.
+ */
+function toAuctionProduct(w: WatchedProductData, livePrice?: number | null): AuctionProductData {
   return {
     externalId: w.externalId,
     title: w.title,
     imageUrl: w.imageUrl,
-    currentPrice: w.lastBidAmount ?? 0,
+    currentPrice: livePrice ?? w.currentPrice ?? w.lastBidAmount ?? 0,
     maxPrice: w.maxBid,
     auctionEndTime: w.auctionEndTime,
     lotNumber: "",
@@ -113,7 +120,14 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 export default function WatchlistPage() {
   const [watched, setWatched] = useState<WatchedProductData[]>([]);
   const [monitors, setMonitors] = useState<MonitorStatus[]>([]);
-  const [liveProductMap, setLiveProductMap] = useState<Map<string, AuctionProductData>>(new Map());
+  const [scheduler, setScheduler] = useState<SchedulerState | null>(null);
+  const [tokenInfo, setTokenInfo] = useState<{
+    hasToken: boolean;
+    isExpired: boolean;
+    isExpiringSoon: boolean;
+    expiresInHours: number | null;
+  } | null>(null);
+  const [showClosed, setShowClosed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -132,24 +146,13 @@ export default function WatchlistPage() {
     severity: "success" | "error" | "info";
   }>({ open: false, message: "", severity: "success" });
 
-  const fetchLiveProducts = useCallback(async (items: WatchedProductData[]) => {
-    if (items.length === 0) return;
-    const ids = items.map((i) => i.externalId).join(",");
-    try {
-      const res = await fetch(`/api/abc-auctions/products/live?externalIds=${ids}`);
-      const data = await res.json();
-      const map = new Map<string, AuctionProductData>();
-      for (const p of data.products ?? []) {
-        map.set(p.externalId, p as AuctionProductData);
-      }
-      setLiveProductMap(map);
-    } catch {
-      // non-critical — cards fall back to WatchedProductData values
-    }
-  }, []);
-
-  const fetchWatched = useCallback(async () => {
-    setLoading(true);
+  /**
+   * Pull the watch list and monitor state together. The watch endpoint now
+   * carries live prices and end times, so there is no separate price fetch to
+   * fall out of sync with.
+   */
+  const refresh = useCallback(async (showSpinner = false) => {
+    if (showSpinner) setLoading(true);
     try {
       const [wRes, mRes] = await Promise.all([
         fetch("/api/abc-auctions/watch"),
@@ -157,32 +160,29 @@ export default function WatchlistPage() {
       ]);
       const wData = await wRes.json();
       const mData = await mRes.json();
-      const items: WatchedProductData[] = wData.watched ?? [];
-      setWatched(items);
+      setWatched(wData.watched ?? []);
       setMonitors(mData.monitors ?? []);
-      fetchLiveProducts(items);
+      setScheduler(mData.scheduler ?? null);
+      setTokenInfo(mData.tokenInfo ?? null);
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
-  }, [fetchLiveProducts]);
+  }, []);
 
   useEffect(() => {
-    fetchWatched();
-    const id = setInterval(async () => {
-      const res = await fetch("/api/abc-auctions/bid/monitor");
-      const data = await res.json();
-      setMonitors(data.monitors ?? []);
-    }, 15000);
+    refresh(true);
+    // Matches the bidder's own 15s cadence inside the snipe window.
+    const id = setInterval(() => refresh(false), 15000);
     return () => clearInterval(id);
-  }, [fetchWatched]);
+  }, [refresh]);
 
   function getMonitorStatus(id: string): MonitorStatus | undefined {
     return monitors.find((m) => m.watchedProductId === id);
   }
 
   const isRunning = (item: WatchedProductData) => {
-    const m = getMonitorStatus(item._id);
-    return m?.bidderStatus === "active" || m?.bidderStatus === "waiting";
+    const status = getMonitorStatus(item._id)?.bidderStatus ?? item.bidderStatus;
+    return RUNNING_BIDDER_STATUSES.includes(status);
   };
 
   async function handleMonitorAction(item: WatchedProductData, action: "start" | "stop") {
@@ -203,7 +203,7 @@ export default function WatchlistPage() {
         message: action === "start" ? "Monitor started" : "Stop signal sent",
         severity: "success",
       });
-      await fetchWatched();
+      await refresh(true);
     } finally {
       setActionLoading(null);
     }
@@ -263,19 +263,25 @@ export default function WatchlistPage() {
       }
       setSnackbar({ open: true, message: "Bid limits updated", severity: "success" });
       setEditDialog((s) => ({ ...s, open: false, loading: false }));
-      await fetchWatched();
+      await refresh(true);
     } catch {
       setEditDialog((s) => ({ ...s, loading: false, error: "Network error" }));
     }
   }
 
+  const closedCount = useMemo(() => watched.filter((w) => w.isClosed).length, [watched]);
+
   const filteredAndSorted = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const list = q ? watched.filter((w) => w.title.toLowerCase().includes(q)) : [...watched];
+    let list = q ? watched.filter((w) => w.title.toLowerCase().includes(q)) : [...watched];
+
+    // Finished auctions are noise on a list whose job is "what am I bidding on
+    // right now" — kept one toggle away rather than silently deleted.
+    if (!showClosed) list = list.filter((w) => !w.isClosed);
 
     list.sort((a, b) => {
-      const priceA = liveProductMap.get(a.externalId)?.currentPrice ?? a.lastBidAmount ?? 0;
-      const priceB = liveProductMap.get(b.externalId)?.currentPrice ?? b.lastBidAmount ?? 0;
+      const priceA = a.currentPrice ?? a.lastBidAmount ?? 0;
+      const priceB = b.currentPrice ?? b.lastBidAmount ?? 0;
       switch (sortBy) {
         case "closingSoon":
           return compareAsc(parseISO(a.auctionEndTime), parseISO(b.auctionEndTime));
@@ -301,7 +307,28 @@ export default function WatchlistPage() {
     });
 
     return list;
-  }, [watched, search, sortBy, liveProductMap]);
+  }, [watched, search, sortBy, showClosed]);
+
+  async function handleClearClosed() {
+    if (!confirm(`Remove ${closedCount} finished auction${closedCount !== 1 ? "s" : ""}?`)) return;
+    setActionLoading("clear-closed");
+    try {
+      const res = await fetch("/api/abc-auctions/watch?closed=1", { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) {
+        setSnackbar({ open: true, message: data.error ?? "Failed to clear", severity: "error" });
+        return;
+      }
+      setSnackbar({
+        open: true,
+        message: `Removed ${data.deleted} finished lot(s)`,
+        severity: "info",
+      });
+      await refresh(true);
+    } finally {
+      setActionLoading(null);
+    }
+  }
 
   return (
     <ProjectShell
@@ -325,26 +352,82 @@ export default function WatchlistPage() {
           )}
         </Stack>
 
-        <FormControl size="small" sx={{ minWidth: 210 }}>
-          <InputLabel id="sort-label">
-            <Stack direction="row" alignItems="center" spacing={0.5}>
-              <SortIcon sx={{ fontSize: 16 }} />
-              <span>Sort by</span>
-            </Stack>
-          </InputLabel>
-          <Select
-            labelId="sort-label"
-            value={sortBy}
-            label="Sort by"
-            onChange={(e) => setSortBy(e.target.value as SortKey)}
+        <Stack direction="row" alignItems="center" spacing={1}>
+          {closedCount > 0 && (
+            <>
+              <Button size="small" color="inherit" onClick={() => setShowClosed((v) => !v)}>
+                {showClosed ? "Hide" : "Show"} closed ({closedCount})
+              </Button>
+              <Button
+                size="small"
+                color="error"
+                startIcon={
+                  actionLoading === "clear-closed" ? (
+                    <CircularProgress size={14} color="inherit" />
+                  ) : (
+                    <DeleteIcon />
+                  )
+                }
+                onClick={handleClearClosed}
+                disabled={actionLoading === "clear-closed"}
+              >
+                Clear closed
+              </Button>
+            </>
+          )}
+
+          <FormControl size="small" sx={{ minWidth: 210 }}>
+            <InputLabel id="sort-label">
+              <Stack direction="row" alignItems="center" spacing={0.5}>
+                <SortIcon sx={{ fontSize: 16 }} />
+                <span>Sort by</span>
+              </Stack>
+            </InputLabel>
+            <Select
+              labelId="sort-label"
+              value={sortBy}
+              label="Sort by"
+              onChange={(e) => setSortBy(e.target.value as SortKey)}
+            >
+              {SORT_OPTIONS.map((opt) => (
+                <MenuItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </Stack>
+      </Stack>
+
+      {/* Anything that would stop a snipe from firing gets said loudly here —
+          the failure mode we care about is silent. */}
+      <Stack spacing={1.5} mb={2}>
+        {tokenInfo && !tokenInfo.hasToken && (
+          <Alert severity="error" action={<Button href="/abc-auctions/settings">Settings</Button>}>
+            No ABC Auctions token — lots are being watched but <strong>no bid can be placed</strong>
+            .
+          </Alert>
+        )}
+        {tokenInfo?.hasToken && tokenInfo.isExpiringSoon && (
+          <Alert
+            severity="warning"
+            action={<Button href="/abc-auctions/settings">Settings</Button>}
           >
-            {SORT_OPTIONS.map((opt) => (
-              <MenuItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+            Token expires in {tokenInfo.expiresInHours}h. Refresh it before your next lot closes.
+          </Alert>
+        )}
+        {scheduler && !scheduler.running && (
+          <Alert severity="error">
+            Bid scheduler is not running. Press Start on a lot, or restart the server.
+          </Alert>
+        )}
+        {scheduler?.running && (
+          <Alert severity="info" icon={<PlayArrowIcon fontSize="small" />}>
+            Sniper armed — {scheduler.activeLots} lot{scheduler.activeLots !== 1 ? "s" : ""}{" "}
+            monitored, {scheduler.lotsInSnipeWindow} inside the last {scheduler.snipeWindowMinutes}{" "}
+            minutes.
+          </Alert>
+        )}
       </Stack>
 
       {loading ? (
@@ -376,9 +459,18 @@ export default function WatchlistPage() {
             const busy = actionLoading === item._id;
             const bidderStatus = monitor?.bidderStatus ?? item.bidderStatus;
             const bidStatus: BidStatusData | undefined = monitor
-              ? { status: monitor.bidderStatus, amount: monitor.lastBidAmount ?? undefined }
+              ? {
+                  status: monitor.bidderStatus,
+                  amount: monitor.lastBidAmount ?? undefined,
+                  currentPrice: monitor.currentPrice ?? undefined,
+                  maxBid: item.maxBid,
+                  isOutbid: monitor.isHighestBidder === false,
+                }
               : undefined;
-            const product = liveProductMap.get(item.externalId) ?? toAuctionProduct(item);
+            // Prefer the price the bidder itself just saw — during a snipe it
+            // is fresher than the periodic live-products fetch.
+            // The bidder's own reading is the freshest during a snipe.
+            const product = toAuctionProduct(item, monitor?.currentPrice ?? item.currentPrice);
 
             return (
               <Grid key={item._id} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
@@ -392,6 +484,12 @@ export default function WatchlistPage() {
                       onWatch={() => openEditDialog(item)}
                     />
                   </Box>
+
+                  {monitor?.lastError && (
+                    <Typography variant="caption" color="error" px={0.5}>
+                      {monitor.lastError}
+                    </Typography>
+                  )}
 
                   {/* Monitor controls */}
                   <Stack direction="row" spacing={1} alignItems="center" px={0.5}>
@@ -477,7 +575,7 @@ export default function WatchlistPage() {
                 input: { startAdornment: <InputAdornment position="start">$</InputAdornment> },
                 htmlInput: { min: 0, step: 1 },
               }}
-              helperText="Start bidding once price exceeds this"
+              helperText="Floor on our own bid — leave at 0 to always bid the cheapest valid increment"
               fullWidth
               size="small"
             />
@@ -490,7 +588,7 @@ export default function WatchlistPage() {
                 input: { startAdornment: <InputAdornment position="start">$</InputAdornment> },
                 htmlInput: { min: 1, step: 1 },
               }}
-              helperText="Stop bidding once price exceeds this"
+              helperText="Hard ceiling — we never bid above this"
               fullWidth
               size="small"
               autoFocus
