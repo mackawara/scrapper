@@ -54,8 +54,9 @@ export async function GET() {
           const auctionEndTime = new Date(detail.EndDate);
           const isClosed =
             detail.Status !== LOT_STATUS.LIVE || auctionEndTime.getTime() <= Date.now();
-          // The API's own Url is authoritative; fall back to rebuilding it.
-          const productUrl = detail.Url ?? canonicalLotUrl(w.productUrl);
+          // detail.Url is the /lot/{type}/{id} form, which the app's bootstrap
+          // redirects away from — always rebuild the dialog-outlet link.
+          const productUrl = canonicalLotUrl(detail.Url ?? w.productUrl);
 
           const changed: Record<string, unknown> = {};
           if (currentPrice !== w.currentPrice) changed.currentPrice = currentPrice;

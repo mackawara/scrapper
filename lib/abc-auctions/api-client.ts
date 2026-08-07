@@ -414,7 +414,9 @@ const lotDetailCache = new Map<string, { at: number; data: LotDetailResponse }>(
  * Extract lot ID and type from a product URL.
  */
 export function parseLotUrl(productUrl: string): { id: string; type: string } | null {
-  const lotMatch = productUrl.match(/\/lot\/(\d+)\/(\d+)/);
+  // Matches both the plain route (/lot/1/123) and the dialog-outlet form
+  // (/search(dialog:lot/1/123)) that the site actually deep-links with.
+  const lotMatch = productUrl.match(/(?:\/|dialog:)lot\/(\d+)\/(\d+)/);
   if (lotMatch) return { type: lotMatch[1], id: lotMatch[2] };
 
   const lotsMatch = productUrl.match(/\/lots\/(\d+)/);
@@ -428,17 +430,24 @@ export function parseLotUrl(productUrl: string): { id: string; type: string } | 
 }
 
 /**
- * Normalise a lot URL to the form the ABC web app can actually route.
+ * Build a lot URL that actually opens the lot in a browser.
  *
- * The Angular app only knows `/lot/{type}/{id}`. An older scraper stored
- * `/lots/{id}`, which the SPA serves a 200 for (index.html is returned for any
- * path) but has no route for, so the tab opens to a blank page. Our own API
- * parsing accepts both, which is why this went unnoticed.
+ * The lot page is an Angular dialog rendered over the search route, so the only
+ * link that survives a cold load is the named-outlet form:
+ *
+ *   https://app.abcauctions.co.zw/search(dialog:lot/{type}/{id})
+ *
+ * This is what the site's own Share button produces. Two plausible-looking
+ * alternatives do not work:
+ *   - `/lots/{id}` (written by the old scraper) has no route at all.
+ *   - `/lot/{type}/{id}` is a real route, but the app's bootstrap navigates to
+ *     `/home` once the session resolves, throwing the deep link away. The API's
+ *     `Url` field hands out this form, so it cannot be trusted for links.
  */
 export function canonicalLotUrl(productUrl: string): string {
   const parsed = parseLotUrl(productUrl);
   if (!parsed) return productUrl;
-  return `${SITE_BASE}/lot/${parsed.type}/${parsed.id}`;
+  return `${SITE_BASE}/search(dialog:lot/${parsed.type}/${parsed.id})`;
 }
 
 /**

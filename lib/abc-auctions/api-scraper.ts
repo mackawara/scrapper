@@ -76,7 +76,9 @@ function mapLot(lot: ApiLot, campaignName: string): AuctionProductData {
     auctionEndTime: lot.EndDate,
     lotNumber: String(lot.LotNumber),
     category: campaignName,
-    productUrl: `${SITE_BASE}/lot/${lot.Type}/${lot.Id}`,
+    // Dialog-outlet form — see canonicalLotUrl(); the plain
+    // /lot/{type}/{id} route bounces to /home on a cold load.
+    productUrl: `${SITE_BASE}/search(dialog:lot/${lot.Type}/${lot.Id})`,
     scrapedAt: new Date().toISOString(),
   };
 }

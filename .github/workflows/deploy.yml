@@ -3,6 +3,9 @@ name: Build & Deploy (PM2)
 on:
   push:
     branches: [main]
+  # Lets the deploy be re-run by hand from the Actions tab or `gh workflow run
+  # deploy.yml`, without needing an empty commit.
+  workflow_dispatch:
 
 env:
   ORACLE_VM_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}

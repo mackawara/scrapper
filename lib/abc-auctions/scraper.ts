@@ -446,8 +446,8 @@ function mapToProduct(
           raw.link ??
           raw.itemUrl ??
           raw.item_url ??
-          // The SPA only routes /lot/{type}/{id}; /lots/{id} opens a blank page.
-          `${BASE_URL}/lot/1/${externalId}`
+          // Dialog-outlet form — see canonicalLotUrl() in api-client.
+          `${BASE_URL}/search(dialog:lot/1/${externalId})`
       ),
       scrapedAt: new Date().toISOString(),
     };
