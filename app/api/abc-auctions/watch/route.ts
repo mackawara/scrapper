@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/mongoose";
 import WatchedProduct from "@/models/WatchedProduct";
-import { canonicalLotUrl, getLotDetail } from "@/lib/abc-auctions/api-client";
-import { LOT_STATUS } from "@/lib/abc-auctions/constants";
+import {
+  canonicalLotUrl,
+  getLotDetail,
+  getTokenInfoAsync,
+  resolveLotIdentityFrom,
+} from "@/lib/abc-auctions/api-client";
+import { startScheduler } from "@/lib/abc-auctions/bidder";
+import { LOT_STATUS, POST_CLOSE_GRACE_MS } from "@/lib/abc-auctions/constants";
 import { BidderStatus } from "@/lib/abc-auctions/types";
 import logger from "@/lib/logger";
 
@@ -17,19 +23,24 @@ const LIVE_CACHE_MS = 10_000;
 const SETTLED_STATUSES: BidderStatus[] = ["won", "lost"];
 
 /**
- * GET /api/abc-auctions/watch
+ * GET /api/abc-auctions/watch[?includeClosed=1]
  *
  * Returns the watch list with a live price and end time for each lot, and
  * writes those values back so the DB never drifts.
+ *
+ * Finished auctions are left out unless `includeClosed=1` is passed: the list's
+ * job is "what am I bidding on right now", and a closed lot can only mislead.
+ * `closedCount` is still reported so the UI can offer to show or clear them.
  *
  * Prices used to come from a separate /products/live call that joined on the
  * scraped `AuctionProduct` cache — watched lots missing from that cache simply
  * never got a price. Reading detail straight off each watched lot's own URL
  * removes that dependency.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     await connectDB();
+    const includeClosed = req.nextUrl.searchParams.get("includeClosed") === "1";
     const watched = await WatchedProduct.find().sort({ createdAt: -1 }).lean();
 
     const enriched = await Promise.all(
@@ -37,6 +48,13 @@ export async function GET() {
         // Settled lots can't change — don't spend API budget re-checking them,
         // but still hand the UI a URL that actually opens the lot.
         if (SETTLED_STATUSES.includes(w.bidderStatus)) {
+          return { ...w, productUrl: canonicalLotUrl(w.productUrl), isClosed: true };
+        }
+
+        // Past its end time by more than the window in which the platform
+        // might still flip it: no API call can make this lot live again.
+        const msSinceEnd = Date.now() - new Date(w.auctionEndTime).getTime();
+        if (msSinceEnd > POST_CLOSE_GRACE_MS) {
           return { ...w, productUrl: canonicalLotUrl(w.productUrl), isClosed: true };
         }
 
@@ -85,7 +103,13 @@ export async function GET() {
       })
     );
 
-    return NextResponse.json({ watched: enriched });
+    const closedCount = enriched.filter((w) => w.isClosed).length;
+
+    return NextResponse.json({
+      watched: includeClosed ? enriched : enriched.filter((w) => !w.isClosed),
+      closedCount,
+      total: enriched.length,
+    });
   } catch (err) {
     logger.error("🔴 GET /api/abc-auctions/watch failed", { err });
     return NextResponse.json({ error: "Failed to fetch watch list" }, { status: 500 });
@@ -136,25 +160,94 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "maxBid must be >= minBid" }, { status: 400 });
     }
 
-    const existing = await WatchedProduct.findOne({ externalId: normalizedExternalId });
-    if (existing) {
-      return NextResponse.json({ error: "Product already being watched" }, { status: 409 });
-    }
+    const canonicalUrl = canonicalLotUrl(String(productUrl));
 
-    const watched = await WatchedProduct.create({
-      externalId: normalizedExternalId,
-      // Store the routable form so the card link always opens the real lot.
-      productUrl: canonicalLotUrl(String(productUrl)),
-      title,
-      imageUrl: imageUrl ?? "",
-      auctionEndTime: new Date(auctionEndTime),
-      minBid,
-      maxBid,
-      bidderStatus: "idle",
+    /**
+     * Duplicate check by lot, not by id.
+     *
+     * A lone `externalId` test misses the case this list actually hit: the API
+     * gives each lot three numbers (`Id`, `AuctionLotId`, `LotNumber`), and a
+     * row keyed on one of them looks nothing like a row keyed on another. Both
+     * are the same lot, so the sniper ends up bidding against itself. Resolving
+     * the lot first gives every id it answers to, and the URL catches rows that
+     * predate the resolver.
+     */
+    const identity = await resolveLotIdentityFrom(canonicalUrl, normalizedExternalId);
+    const knownIds = [
+      normalizedExternalId,
+      ...(identity ? [identity.auctionLotId, identity.id] : []),
+    ];
+
+    const existing = await WatchedProduct.findOne({
+      $or: [
+        { externalId: { $in: knownIds } },
+        { productUrl: canonicalUrl },
+        ...(identity
+          ? [{ productUrl: canonicalLotUrl(`/lot/${identity.type}/${identity.id}`) }]
+          : []),
+      ],
     });
 
-    logger.info("🟢 Added to watch list", { externalId: normalizedExternalId, title });
-    return NextResponse.json({ watched }, { status: 201 });
+    if (existing) {
+      return NextResponse.json(
+        {
+          error: "Product already being watched",
+          watchedId: String(existing._id),
+          // Say which entry, so "already watched" doesn't look like a bug when
+          // the id in hand is not the id it was stored under.
+          matchedExternalId: existing.externalId,
+        },
+        { status: 409 }
+      );
+    }
+
+    const endTime = new Date(auctionEndTime);
+    // A finished lot has nothing to monitor; it is stored so the UI can show
+    // the outcome, but it must not be handed to the scheduler.
+    const monitoring = endTime.getTime() > Date.now();
+
+    const watched = await WatchedProduct.create({
+      // Store the ids the API will accept, not whichever ones the browse cache
+      // happened to carry: the AuctionLotId is what a bid is placed against,
+      // and the lot `Id` is what the detail endpoint resolves.
+      externalId: identity?.auctionLotId ?? normalizedExternalId,
+      // Store the routable form so the card link always opens the real lot.
+      productUrl: identity ? canonicalLotUrl(`/lot/${identity.type}/${identity.id}`) : canonicalUrl,
+      title,
+      imageUrl: imageUrl ?? "",
+      auctionEndTime: endTime,
+      minBid,
+      maxBid,
+      // maxBid is required above, so there is nothing left for the user to
+      // configure — start monitoring now instead of waiting for someone to
+      // press Start on the watch list.
+      bidderStatus: monitoring ? "waiting" : "idle",
+      nextCheckAt: new Date(),
+    });
+
+    let tokenInfo: Awaited<ReturnType<typeof getTokenInfoAsync>> | null = null;
+    if (monitoring) {
+      // Covers the case where the process booted with nothing to watch and so
+      // has no scheduler running yet; the lot is picked up on the next tick.
+      startScheduler();
+      // Watching but unable to bid is the silent failure worth shouting about.
+      tokenInfo = await getTokenInfoAsync();
+    }
+
+    logger.info("🟢 Added to watch list", { externalId: normalizedExternalId, title, monitoring });
+    return NextResponse.json(
+      {
+        watched,
+        monitoring,
+        tokenInfo,
+        ...(monitoring &&
+          tokenInfo &&
+          !tokenInfo.hasToken && {
+            warning: "Auto-bid armed, but no ABC Auctions token is set — no bid can be placed.",
+          }),
+      },
+      { status: 201 }
+    );
   } catch (err) {
     logger.error("🔴 POST /api/abc-auctions/watch failed", { err });
     return NextResponse.json({ error: "Failed to add watch" }, { status: 500 });

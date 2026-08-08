@@ -5,7 +5,7 @@
  */
 
 import logger from "@/lib/logger";
-import { AuctionProductData, ScrapedCategory } from "./types";
+import type { AuctionProductData, ScrapedCategory } from "./types";
 
 const API_BASE = process.env.ABC_AUCTIONS_API_URL ?? "https://app-api.abcauctions.co.zw";
 const SITE_BASE = process.env.ABC_AUCTIONS_BASE_URL ?? "https://app.abcauctions.co.zw";
@@ -126,24 +126,71 @@ export interface ApiCampaign {
   count: number;
 }
 
+/** Most cursor hops a single search will make before giving up. */
+const MAX_SEARCH_PAGES = 6;
+
+export interface QueryLotsOptions {
+  /**
+   * How many open lots the caller needs in total — a window, not a page size.
+   * Paging deeper means asking for a bigger window, because the API is
+   * cursor-based and has no offset.
+   */
+  limit?: number;
+  /** Narrow to these campaigns using the API's own facet, not a post-filter. */
+  categories?: string[];
+}
+
+export interface QueryLotsResult {
+  products: AuctionProductData[];
+  /** The API's own hit count — includes lots we filtered out for being closed. */
+  total: number;
+  /** True when `products` is the entire result set, so its length is exact. */
+  exhausted: boolean;
+}
+
 /**
  * Search lots by text query — calls the ABC API directly.
  * Used by the search bar in the UI for real-time results.
+ *
+ * Category narrowing goes through the `campaign` facet rather than filtering
+ * what comes back: a lot payload carries no campaign name, so the only label we
+ * can put on a search hit is the one we asked for.
  */
 export async function queryLots(
   query: string,
-  limit: number = 48
-): Promise<{ products: AuctionProductData[]; total: number }> {
-  logger.info("🔵 Querying lots", { query, limit });
+  { limit = 48, categories = [] }: QueryLotsOptions = {}
+): Promise<QueryLotsResult> {
+  logger.info("🔵 Querying lots", { query, limit, categories });
 
-  const data = await callSearchApi({ query, size: limit });
+  const facets = categories.length > 0 ? { campaign: categories } : undefined;
+  const products: AuctionProductData[] = [];
+  let cursor: string | undefined;
+  let total = 0;
+  let exhausted = false;
+  // Only knowable when the caller narrowed to exactly one campaign.
+  let campaignLabel = categories.length === 1 ? categories[0] : "Uncategorized";
 
-  const campaignFacet = data.Meta.Facets.find((f) => f.Name === "campaign");
-  const defaultCampaign = campaignFacet?.Buckets[0]?.Value ?? "Uncategorized";
+  for (let i = 0; i < MAX_SEARCH_PAGES && products.length < limit; i++) {
+    const data = await callSearchApi({ query, facets, cursor, size: PAGE_SIZE });
 
-  const products = data.List.filter(isOpenLot).map((lot) => mapLot(lot, defaultCampaign));
+    if (i === 0) {
+      total = data.Meta.Count;
+      if (categories.length !== 1) {
+        const campaignFacet = data.Meta.Facets.find((f) => f.Name === "campaign");
+        campaignLabel = campaignFacet?.Buckets[0]?.Value ?? campaignLabel;
+      }
+    }
 
-  return { products, total: data.Meta.Count };
+    products.push(...data.List.filter(isOpenLot).map((lot) => mapLot(lot, campaignLabel)));
+
+    if (!data.Meta.Cursor || data.List.length < PAGE_SIZE) {
+      exhausted = true;
+      break;
+    }
+    cursor = data.Meta.Cursor;
+  }
+
+  return { products, total, exhausted };
 }
 
 /**

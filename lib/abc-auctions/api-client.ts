@@ -17,7 +17,8 @@ import connectDB from "@/lib/mongoose";
 import AuthToken from "@/models/AuthToken";
 import { limitedFetch } from "./rate-limiter";
 import { TOKEN_EXPIRY_WARNING_MS } from "./constants";
-import { BidIncrementTier, FALLBACK_BID_INCREMENTS } from "./bid-ladder";
+import { type BidIncrementTier, FALLBACK_BID_INCREMENTS } from "./bid-ladder";
+import { parseLotUrl } from "./lot-url";
 
 // The ladder maths lives in bid-ladder.ts (import-free so it can be verified
 // directly against the live API — see scripts/verify-bid-ladder.mjs).
@@ -402,6 +403,25 @@ const auctionLotIdCache = new Map<string, number>();
 const bidIdLookupCache = new Map<string, string>();
 
 /**
+ * A lot's three identifiers, keyed by any one of them.
+ *
+ * The API hands out three numbers per lot and they are not interchangeable:
+ *
+ *   Id           — what `/lots/detail?id=` wants, and what a lot URL contains
+ *   AuctionLotId — what `/bids/place?id=` wants
+ *   LotNumber    — a display number, useless as an API id
+ *
+ * A URL built from the wrong one 400s with "Lot not found", which reads
+ * downstream as a lot with no price. Resolving through search repairs it.
+ */
+export interface LotIdentity {
+  id: string;
+  type: string;
+  auctionLotId: string;
+}
+const lotIdentityCache = new Map<string, LotIdentity>();
+
+/**
  * Very short-lived cache of full lot details, opt-in via `maxAgeMs`.
  *
  * The watch list polls every 15s for N lots; without this, opening two browser
@@ -410,24 +430,7 @@ const bidIdLookupCache = new Map<string, string>();
  */
 const lotDetailCache = new Map<string, { at: number; data: LotDetailResponse }>();
 
-/**
- * Extract lot ID and type from a product URL.
- */
-export function parseLotUrl(productUrl: string): { id: string; type: string } | null {
-  // Matches both the plain route (/lot/1/123) and the dialog-outlet form
-  // (/search(dialog:lot/1/123)) that the site actually deep-links with.
-  const lotMatch = productUrl.match(/(?:\/|dialog:)lot\/(\d+)\/(\d+)/);
-  if (lotMatch) return { type: lotMatch[1], id: lotMatch[2] };
-
-  const lotsMatch = productUrl.match(/\/lots\/(\d+)/);
-  if (lotsMatch) return { type: "1", id: lotsMatch[1] };
-
-  // Also handle query-style: ?id=123
-  const idMatch = productUrl.match(/[?&]id=(\d+)/);
-  if (idMatch) return { type: "1", id: idMatch[1] };
-
-  return null;
-}
+export { parseLotUrl };
 
 /**
  * Build a lot URL that actually opens the lot in a browser.
@@ -487,22 +490,38 @@ export async function getLotDetail(
     }
   }
 
-  try {
-    const url = `${API_BASE}/lots/detail?id=${parsed.id}&type=${parsed.type}`;
-    const res = await limitedFetch(url, {
-      headers,
-      signal: AbortSignal.timeout(15_000),
-    });
-
+  const fetchDetail = async (id: string, type: string): Promise<LotDetailResponse | null> => {
+    const url = `${API_BASE}/lots/detail?id=${id}&type=${type}`;
+    const res = await limitedFetch(url, { headers, signal: AbortSignal.timeout(15_000) });
     if (!res.ok) {
-      logger.warn("🌕 Lot detail API error", {
-        status: res.status,
-        productUrl,
-      });
+      logger.warn("🌕 Lot detail API error", { status: res.status, id, type, productUrl });
       return null;
     }
+    return (await res.json()) as LotDetailResponse;
+  };
 
-    const data = (await res.json()) as LotDetailResponse;
+  try {
+    let data = await fetchDetail(parsed.id, parsed.type);
+
+    /**
+     * A URL carrying a LotNumber or an AuctionLotId instead of the lot `Id`
+     * 400s here. That is not a dead lot — it is a mislabelled one, and it
+     * surfaced as a watched lot with no price at all. Ask search which lot the
+     * number belongs to and retry with the id `lots/detail` actually wants.
+     */
+    if (!data) {
+      const identity = await resolveLotIdentity(parsed.id);
+      if (identity && identity.id !== parsed.id) {
+        logger.info("🔵 Retrying lot detail with the resolved lot id", {
+          from: parsed.id,
+          to: identity.id,
+          productUrl,
+        });
+        data = await fetchDetail(identity.id, identity.type);
+      }
+    }
+
+    if (!data) return null;
 
     // Cache the AuctionLotId mapping (stable, never changes for a lot)
     auctionLotIdCache.set(`${parsed.type}:${parsed.id}`, data.AuctionLotId);
@@ -549,10 +568,17 @@ export async function getCurrentPrice(productUrl: string): Promise<number | null
   return detail.CurrentBid ?? detail.StartingBid ?? null;
 }
 
-async function resolveAuctionLotIdFromSearch(identifier: string): Promise<string | null> {
+/**
+ * Look a lot up by any of its three ids and return all three.
+ *
+ * `lots/search` is the only endpoint that shows them side by side, so it is the
+ * only way to tell which id space a stored number came from — and the only way
+ * back to the `Id` that `lots/detail` will accept.
+ */
+export async function resolveLotIdentity(identifier: string): Promise<LotIdentity | null> {
   if (!/^\d+$/.test(identifier)) return null;
 
-  const cached = bidIdLookupCache.get(identifier);
+  const cached = lotIdentityCache.get(identifier);
   if (cached) return cached;
 
   try {
@@ -574,7 +600,10 @@ async function resolveAuctionLotIdFromSearch(identifier: string): Promise<string
     if (list.length === 0) return null;
 
     const numericId = Number(identifier);
-    const exact = list.find((lot) => {
+    // Only an exact hit on one of the three id fields is safe here. The old
+    // code fell back to `list[0]`, which for a free-text-ish query is just
+    // "some other lot" — a wrong price, or a bid on the wrong item.
+    const match = list.find((lot) => {
       const lotNumber = Number(lot.LotNumber);
       return (
         lot.Id === numericId ||
@@ -583,31 +612,70 @@ async function resolveAuctionLotIdFromSearch(identifier: string): Promise<string
       );
     });
 
-    const match = exact ?? list[0];
-    if (!match || !Number.isFinite(match.AuctionLotId)) return null;
+    if (!match || !Number.isFinite(match.AuctionLotId) || !Number.isFinite(match.Id)) return null;
 
-    const resolved = String(match.AuctionLotId);
+    const identity: LotIdentity = {
+      id: String(match.Id),
+      type: String(match.Type ?? 1),
+      auctionLotId: String(match.AuctionLotId),
+    };
 
-    bidIdLookupCache.set(identifier, resolved);
-    bidIdLookupCache.set(String(match.Id), resolved);
-    bidIdLookupCache.set(String(match.AuctionLotId), resolved);
-    if (match.LotNumber != null) {
-      bidIdLookupCache.set(String(match.LotNumber), resolved);
+    // Key it under every id the lot answers to, so the next lookup is free
+    // whichever one the caller happens to be holding.
+    for (const key of [identifier, match.Id, match.AuctionLotId, match.LotNumber]) {
+      if (key != null) lotIdentityCache.set(String(key), identity);
     }
 
-    logger.info("🔵 Resolved bid id via lots/search", {
+    logger.info("🔵 Resolved lot identity via lots/search", {
       identifier,
-      lotId: match.Id,
-      auctionLotId: match.AuctionLotId,
+      lotId: identity.id,
+      auctionLotId: identity.auctionLotId,
       lotNumber: match.LotNumber,
-      type: match.Type,
+      type: identity.type,
     });
 
-    return resolved;
+    return identity;
   } catch (err) {
-    logger.debug("🟣 lots/search bid-id resolution failed", { identifier, err });
+    logger.debug("🟣 lots/search identity resolution failed", { identifier, err });
     return null;
   }
+}
+
+/**
+ * Which lot a stored record actually refers to, from whatever ids it carries.
+ *
+ * The URL is tried first because it is the field the API can validate; a stored
+ * externalId is only a number until something resolves it. Returns null when
+ * neither leads anywhere, which means the lot is gone rather than mislabelled.
+ */
+export async function resolveLotIdentityFrom(
+  productUrl?: string | null,
+  externalId?: string | null
+): Promise<LotIdentity | null> {
+  if (productUrl) {
+    const parsed = parseLotUrl(productUrl);
+    if (parsed) {
+      const viaUrl = await resolveLotIdentity(parsed.id);
+      if (viaUrl) return viaUrl;
+    }
+  }
+
+  const stored = externalId?.trim();
+  return stored ? resolveLotIdentity(stored) : null;
+}
+
+async function resolveAuctionLotIdFromSearch(identifier: string): Promise<string | null> {
+  const cached = bidIdLookupCache.get(identifier);
+  if (cached) return cached;
+
+  const identity = await resolveLotIdentity(identifier);
+  if (!identity) return null;
+
+  bidIdLookupCache.set(identifier, identity.auctionLotId);
+  bidIdLookupCache.set(identity.id, identity.auctionLotId);
+  bidIdLookupCache.set(identity.auctionLotId, identity.auctionLotId);
+
+  return identity.auctionLotId;
 }
 
 // ─── Bid increments ────────────────────────────────────────────────────────
@@ -675,12 +743,16 @@ async function resolveBidExternalId(
 ): Promise<string | null> {
   const normalizedExternalId = externalId?.trim() ?? "";
 
-  // Primary path: use payload/db externalId directly for bidding.
-  if (/^\d+$/.test(normalizedExternalId)) {
-    bidIdLookupCache.set(normalizedExternalId, normalizedExternalId);
-    return normalizedExternalId;
-  }
-
+  /**
+   * The lot URL wins over a stored externalId.
+   *
+   * A numeric externalId used to be taken at face value, which is only right
+   * when it really is the AuctionLotId. Watch rows exist whose externalId is
+   * the lot `Id` — numeric, plausible, and the wrong number to bid against.
+   * The URL is checkable: `lots/detail` either resolves it or doesn't, and it
+   * reports the AuctionLotId itself. So ask it first and keep the stored id as
+   * the fallback for when there is no usable URL.
+   */
   if (productUrl) {
     const auctionLotId = await getAuctionLotId(productUrl);
     if (auctionLotId != null) {

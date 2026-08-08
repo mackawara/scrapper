@@ -479,6 +479,34 @@ export async function startMonitor(watchedProductId: string): Promise<void> {
   logger.info("🟢 Monitor started", { watchedProductId });
 }
 
+/**
+ * Hand every watched lot that has a ceiling but was never given to the
+ * scheduler over to it.
+ *
+ * Watching a lot now arms it on creation, so this only catches rows written
+ * before that behaviour existed (or left behind by a half-failed request).
+ * Without it such a lot sits in the watch list looking monitored, is never
+ * polled, and quietly misses its close.
+ */
+export async function armPendingLots(): Promise<number> {
+  await connectDB();
+  const result = await WatchedProduct.updateMany(
+    {
+      bidderStatus: "idle",
+      maxBid: { $gt: 0 },
+      auctionEndTime: { $gt: new Date() },
+    },
+    { $set: { bidderStatus: "waiting", lastError: null, nextCheckAt: new Date() } }
+  );
+
+  if (result.modifiedCount > 0) {
+    logger.info("🟢 Armed watched lots that were never monitored", {
+      count: result.modifiedCount,
+    });
+  }
+  return result.modifiedCount;
+}
+
 /** Pause automated management of a lot. */
 export async function stopMonitor(watchedProductId: string): Promise<void> {
   await connectDB();

@@ -15,7 +15,7 @@ export async function register(): Promise<void> {
 
   try {
     const { loadPersistedToken, getTokenInfo } = await import("@/lib/abc-auctions/api-client");
-    const { startScheduler } = await import("@/lib/abc-auctions/bidder");
+    const { armPendingLots, startScheduler } = await import("@/lib/abc-auctions/bidder");
 
     await loadPersistedToken();
     const info = getTokenInfo();
@@ -25,6 +25,9 @@ export async function register(): Promise<void> {
     } else if (info.isExpiringSoon) {
       logger.warn("🌕 ABC Auctions token expires soon", { expiresInHours: info.expiresInHours });
     }
+
+    // Legacy rows sat in "idle" until someone pressed Start — pick them up.
+    await armPendingLots();
 
     startScheduler();
   } catch (err) {

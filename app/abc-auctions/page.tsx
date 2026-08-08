@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Pagination from "@mui/material/Pagination";
 import Snackbar from "@mui/material/Snackbar";
@@ -58,22 +59,37 @@ const NAV_ITEMS: NavItem[] = [
 
 const PAGE_SIZE = 48;
 
+/** Reads the initial category / page / query from the URL on a cold load. */
+function initialParams() {
+  if (typeof window === "undefined") return { categories: [] as string[], page: 1, query: "" };
+  const params = new URLSearchParams(window.location.search);
+  const cat = params.get("category");
+  const pageParam = parseInt(params.get("page") ?? "1", 10);
+  return {
+    categories: cat
+      ? cat
+          .split(",")
+          .map((c) => c.trim())
+          .filter(Boolean)
+      : [],
+    page: Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1,
+    query: params.get("q") ?? "",
+  };
+}
+
 export default function AbcAuctionsPage() {
+  const [initial] = useState(initialParams);
   const [products, setProducts] = useState<AuctionProductData[]>([]);
   const [watched, setWatched] = useState<WatchedProductData[]>([]);
   const [bidStatusMap, setBidStatusMap] = useState<Map<string, any>>(new Map());
   const [categories, setCategories] = useState<CategoryItem[]>([]);
-  const [selectedCategories, setSelectedCategories] = useState<string[]>(() => {
-    if (typeof window === "undefined") return [];
-    const cat = new URLSearchParams(window.location.search).get("category");
-    return cat ? [cat] : [];
-  });
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(initial.categories);
+  const [search, setSearch] = useState(initial.query);
+  const [debouncedSearch, setDebouncedSearch] = useState(initial.query);
   const [regexMode, setRegexMode] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(initial.page);
   const [loading, setLoading] = useState(true);
   const [scraping, setScraping] = useState(false);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
@@ -84,6 +100,9 @@ export default function AbcAuctionsPage() {
     open: false,
     product: null,
   });
+  // This page is prerendered, where there is no URL to read — so anything drawn
+  // from the query string waits for the client to take over.
+  const [mounted, setMounted] = useState(false);
   const [watchLoading, setWatchLoading] = useState(false);
   const [bidLoadingExternalId, setBidLoadingExternalId] = useState<string | null>(null);
   const [bidProductIds, setBidProductIds] = useState<string[]>([]);
@@ -117,10 +136,31 @@ export default function AbcAuctionsPage() {
     };
   }, [search, regexMode]);
 
-  // Reset to page 1 when filters change
+  // Reset to page 1 when filters change — but not on the first render, which
+  // would throw away a ?page= deep link before it was ever fetched.
+  const filtersSettled = useRef(false);
   useEffect(() => {
+    if (!filtersSettled.current) {
+      filtersSettled.current = true;
+      return;
+    }
     setPage(1);
   }, [debouncedSearch, selectedCategories, filters]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Mirror the filters into the URL so a refresh, a bookmark, or a shared link
+  // lands on the same page of the same category.
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (selectedCategories.length > 0) params.set("category", selectedCategories.join(","));
+    if (debouncedSearch) params.set("q", debouncedSearch);
+    if (page > 1) params.set("page", String(page));
+    const qs = params.toString();
+    window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
+  }, [selectedCategories, debouncedSearch, page]);
 
   const fetchProducts = useCallback(async () => {
     if (searchError) return;
@@ -170,8 +210,10 @@ export default function AbcAuctionsPage() {
     setCategories(data.categories ?? ([] as CategoryItem[]));
   }, []);
 
+  // Closed lots are asked for explicitly: the grid marks a card as watched from
+  // this list, and a finished lot the user watched should still read as watched.
   const fetchWatched = useCallback(async () => {
-    const res = await fetch("/api/abc-auctions/watch");
+    const res = await fetch("/api/abc-auctions/watch?includeClosed=1");
     const data = await res.json();
     setWatched(data.watched ?? []);
   }, []);
@@ -287,12 +329,22 @@ export default function AbcAuctionsPage() {
           maxBid,
         }),
       });
+      const data = await res.json();
       if (!res.ok) {
-        const err = await res.json();
-        setSnackbar({ open: true, message: err.error ?? "Failed to watch", severity: "error" });
+        setSnackbar({ open: true, message: data.error ?? "Failed to watch", severity: "error" });
         return;
       }
-      setSnackbar({ open: true, message: "Added to watch list", severity: "success" });
+      // Watching now arms the sniper on the server, so say so — there is no
+      // Start button left to press.
+      setSnackbar({
+        open: true,
+        message:
+          data.warning ??
+          (data.monitoring
+            ? `Watching — auto-bid armed up to $${maxBid.toLocaleString()}`
+            : "Added to watch list"),
+        severity: data.warning ? "info" : "success",
+      });
       setWatchDialog({ open: false, product: null });
       await fetchWatched();
     } finally {
@@ -345,7 +397,8 @@ export default function AbcAuctionsPage() {
       <FilterPanel filters={filters} onChange={setFilters} />
       <CategorySidebar
         categories={categories}
-        selected={selectedCategories}
+        // Same reason as the chips: the prerender has no query string to read.
+        selected={mounted ? selectedCategories : []}
         onChange={setSelectedCategories}
       />
     </>
@@ -391,6 +444,28 @@ export default function AbcAuctionsPage() {
           {scraping ? "Scraping…" : "Refresh"}
         </Button>
       </Stack>
+
+      {/* The category filter lives in the sidebar; echo it here so what's
+          narrowing a paged grid is visible from the grid itself. */}
+      {mounted && selectedCategories.length > 0 && (
+        <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" mb={2} alignItems="center">
+          {selectedCategories.map((name) => (
+            <Chip
+              key={name}
+              label={name}
+              size="small"
+              color="primary"
+              variant="outlined"
+              onDelete={() => setSelectedCategories((prev) => prev.filter((c) => c !== name))}
+            />
+          ))}
+          {selectedCategories.length > 1 && (
+            <Button size="small" color="inherit" onClick={() => setSelectedCategories([])}>
+              Clear categories
+            </Button>
+          )}
+        </Stack>
+      )}
 
       <ProductGrid
         products={products}

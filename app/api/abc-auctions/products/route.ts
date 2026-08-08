@@ -7,6 +7,12 @@ import logger from "@/lib/logger";
 const ALLOWED_SORT_FIELDS = ["auctionEndTime", "currentPrice", "title", "lotNumber"] as const;
 type SortField = (typeof ALLOWED_SORT_FIELDS)[number];
 
+/**
+ * How deep a text search can be paged. The search API has no offset, so page N
+ * costs the first N pages of round-trips — the cache path below has no such cap.
+ */
+const SEARCH_MAX_RESULTS = 480;
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = req.nextUrl;
@@ -44,12 +50,18 @@ export async function GET(req: NextRequest) {
     // ── Live search: query ABC API directly ──────────────────────────
     if (search) {
       try {
-        const { products, total } = await queryLots(search, limit);
+        // The search API is cursor-based, so reaching page N means holding the
+        // first N pages. Capped because each extra page costs round-trips.
+        const fetchWindow = Math.min(page * limit, SEARCH_MAX_RESULTS);
+        const {
+          products,
+          total: apiTotal,
+          exhausted,
+        } = await queryLots(search, { limit: fetchWindow, categories: categoryList });
 
-        // Apply client-side filters for API results
+        // Date and price narrowing the search API can't express — applied to
+        // the window we hold. Category is already handled by its facet.
         let filtered = products;
-        if (categoryList.length > 0)
-          filtered = filtered.filter((p) => categoryList.includes(p.category));
         if (endAfter)
           filtered = filtered.filter((p) => new Date(p.auctionEndTime) >= new Date(endAfter));
         if (endBefore)
@@ -57,7 +69,8 @@ export async function GET(req: NextRequest) {
         if (!isNaN(minPrice)) filtered = filtered.filter((p) => p.currentPrice >= minPrice);
         if (!isNaN(maxPrice)) filtered = filtered.filter((p) => p.currentPrice <= maxPrice);
 
-        // Sort results
+        // Sort results. Ordering is only stable across pages once the whole
+        // result set is in hand; short of that the API's own order carries it.
         filtered.sort((a, b) => {
           const av = a[sortBy] ?? "";
           const bv = b[sortBy] ?? "";
@@ -66,10 +79,23 @@ export async function GET(req: NextRequest) {
           return 0;
         });
 
+        const start = (page - 1) * limit;
+
+        /**
+         * Once the result set is exhausted — or we dropped rows ourselves — the
+         * count we hold is the honest one. Otherwise keep the API's count so
+         * the pager can still reach further pages, up to the cap.
+         */
+        const narrowed = filtered.length !== products.length;
+        const total =
+          exhausted || narrowed
+            ? filtered.length
+            : Math.min(Math.max(apiTotal, filtered.length), SEARCH_MAX_RESULTS);
+
         return NextResponse.json({
-          products: filtered,
-          total: filtered.length !== products.length ? filtered.length : total,
-          page: 1,
+          products: filtered.slice(start, start + limit),
+          total,
+          page,
           limit,
         });
       } catch (err) {

@@ -128,6 +128,7 @@ export default function WatchlistPage() {
     expiresInHours: number | null;
   } | null>(null);
   const [showClosed, setShowClosed] = useState(false);
+  const [closedCount, setClosedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -150,24 +151,32 @@ export default function WatchlistPage() {
    * Pull the watch list and monitor state together. The watch endpoint now
    * carries live prices and end times, so there is no separate price fetch to
    * fall out of sync with.
+   *
+   * Finished auctions are left out by the endpoint itself and only asked for
+   * when the user opts in, so a closed lot can't leak onto the list through a
+   * gap in a client-side filter.
    */
-  const refresh = useCallback(async (showSpinner = false) => {
-    if (showSpinner) setLoading(true);
-    try {
-      const [wRes, mRes] = await Promise.all([
-        fetch("/api/abc-auctions/watch"),
-        fetch("/api/abc-auctions/bid/monitor"),
-      ]);
-      const wData = await wRes.json();
-      const mData = await mRes.json();
-      setWatched(wData.watched ?? []);
-      setMonitors(mData.monitors ?? []);
-      setScheduler(mData.scheduler ?? null);
-      setTokenInfo(mData.tokenInfo ?? null);
-    } finally {
-      if (showSpinner) setLoading(false);
-    }
-  }, []);
+  const refresh = useCallback(
+    async (showSpinner = false) => {
+      if (showSpinner) setLoading(true);
+      try {
+        const [wRes, mRes] = await Promise.all([
+          fetch(`/api/abc-auctions/watch${showClosed ? "?includeClosed=1" : ""}`),
+          fetch("/api/abc-auctions/bid/monitor"),
+        ]);
+        const wData = await wRes.json();
+        const mData = await mRes.json();
+        setWatched(wData.watched ?? []);
+        setClosedCount(wData.closedCount ?? 0);
+        setMonitors(mData.monitors ?? []);
+        setScheduler(mData.scheduler ?? null);
+        setTokenInfo(mData.tokenInfo ?? null);
+      } finally {
+        if (showSpinner) setLoading(false);
+      }
+    },
+    [showClosed]
+  );
 
   useEffect(() => {
     refresh(true);
@@ -269,14 +278,13 @@ export default function WatchlistPage() {
     }
   }
 
-  const closedCount = useMemo(() => watched.filter((w) => w.isClosed).length, [watched]);
-
   const filteredAndSorted = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = q ? watched.filter((w) => w.title.toLowerCase().includes(q)) : [...watched];
 
-    // Finished auctions are noise on a list whose job is "what am I bidding on
-    // right now" — kept one toggle away rather than silently deleted.
+    // The endpoint already withholds finished auctions unless we asked for
+    // them; this keeps the grid correct in the instant before that refetch
+    // lands after the toggle flips.
     if (!showClosed) list = list.filter((w) => !w.isClosed);
 
     list.sort((a, b) => {
@@ -438,10 +446,12 @@ export default function WatchlistPage() {
         <Box sx={{ textAlign: "center", py: 10 }}>
           <VisibilityIcon sx={{ fontSize: 56, color: "text.disabled", mb: 2 }} />
           <Typography variant="h6" color="text.secondary">
-            No watched items yet
+            {closedCount > 0 ? "Nothing live on your watch list" : "No watched items yet"}
           </Typography>
           <Typography variant="body2" color="text.disabled" mb={3}>
-            Browse live lots and click Watch to start tracking.
+            {closedCount > 0
+              ? `${closedCount} watched auction${closedCount !== 1 ? "s have" : " has"} finished. Watch a live lot to arm the sniper again.`
+              : "Browse live lots and click Watch to start tracking."}
           </Typography>
           <Button variant="contained" href="/abc-auctions" startIcon={<GridViewIcon />}>
             Browse Lots
@@ -449,7 +459,9 @@ export default function WatchlistPage() {
         </Box>
       ) : filteredAndSorted.length === 0 ? (
         <Box sx={{ textAlign: "center", py: 8 }}>
-          <Typography color="text.secondary">No items match &quot;{search}&quot;</Typography>
+          <Typography color="text.secondary">
+            {search ? `No items match "${search}"` : "No live watched lots"}
+          </Typography>
         </Box>
       ) : (
         <Grid container spacing={2}>
@@ -458,19 +470,25 @@ export default function WatchlistPage() {
             const running = isRunning(item);
             const busy = actionLoading === item._id;
             const bidderStatus = monitor?.bidderStatus ?? item.bidderStatus;
+            /**
+             * The watch endpoint refetched this lot's price while serving this
+             * request, so it is seconds old. The monitor's copy is only as
+             * fresh as the bidder's last poll — every 15s at the wire, but
+             * every 5 to 30 minutes for a lot that closes later today. Reading
+             * the monitor first showed those lots a stale bid.
+             */
+            const livePrice = item.currentPrice ?? monitor?.currentPrice ?? null;
             const bidStatus: BidStatusData | undefined = monitor
               ? {
                   status: monitor.bidderStatus,
                   amount: monitor.lastBidAmount ?? undefined,
-                  currentPrice: monitor.currentPrice ?? undefined,
+                  // Same figure as the card, so the two can't disagree.
+                  currentPrice: livePrice ?? undefined,
                   maxBid: item.maxBid,
                   isOutbid: monitor.isHighestBidder === false,
                 }
               : undefined;
-            // Prefer the price the bidder itself just saw — during a snipe it
-            // is fresher than the periodic live-products fetch.
-            // The bidder's own reading is the freshest during a snipe.
-            const product = toAuctionProduct(item, monitor?.currentPrice ?? item.currentPrice);
+            const product = toAuctionProduct(item, livePrice);
 
             return (
               <Grid key={item._id} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>

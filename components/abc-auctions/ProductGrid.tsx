@@ -4,6 +4,7 @@ import Grid from "@mui/material/Grid";
 import Skeleton from "@mui/material/Skeleton";
 import Card from "@mui/material/Card";
 import { AuctionProductData, WatchedProductData, BidStatusData } from "@/lib/abc-auctions/types";
+import { lotIdsFor } from "@/lib/abc-auctions/lot-url";
 import ProductCard from "./ProductCard";
 
 interface ProductGridProps {
@@ -43,18 +44,35 @@ export default function ProductGrid({
   onAuctionClose,
   bidLoadingExternalId = null,
 }: ProductGridProps) {
-  const watchedMap = new Map(watched.map((w) => [w.externalId, w]));
+  /**
+   * Watched lots are keyed under every id they answer to, and each card is
+   * looked up by every id it holds. A lot stored under its AuctionLotId has to
+   * match a card carrying its lot `Id`, or a watched lot silently reads as
+   * un-watched and offers to be watched again.
+   */
+  const watchedMap = new Map<string, WatchedProductData>();
+  for (const w of watched) {
+    for (const id of lotIdsFor(w)) if (!watchedMap.has(id)) watchedMap.set(id, w);
+  }
+  const findWatched = (product: AuctionProductData) => {
+    for (const id of lotIdsFor(product)) {
+      const hit = watchedMap.get(id);
+      if (hit) return hit;
+    }
+    return undefined;
+  };
+
   const wishlistMatchSet = new Set(wishlistMatchExternalIds);
   const bidProductIdSet = new Set(bidProductIds);
   const sortedProducts = [...products].sort((a, b) => {
     const aPriority = wishlistMatchSet.has(a.externalId)
       ? 2
-      : watchedMap.has(a.externalId) || bidProductIdSet.has(a.externalId)
+      : findWatched(a) || bidProductIdSet.has(a.externalId)
         ? 1
         : 0;
     const bPriority = wishlistMatchSet.has(b.externalId)
       ? 2
-      : watchedMap.has(b.externalId) || bidProductIdSet.has(b.externalId)
+      : findWatched(b) || bidProductIdSet.has(b.externalId)
         ? 1
         : 0;
     return bPriority - aPriority;
@@ -75,7 +93,7 @@ export default function ProductGrid({
   return (
     <Grid container spacing={2}>
       {sortedProducts.map((product) => {
-        const watchEntry = watchedMap.get(product.externalId);
+        const watchEntry = findWatched(product);
         const bidStatus = watchEntry ? bidStatusMap.get(watchEntry._id) : undefined;
         return (
           <Grid key={product.externalId} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
